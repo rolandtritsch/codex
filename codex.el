@@ -145,6 +145,30 @@ When nil, the CLI default is used."
   :type 'string
   :group 'codex)
 
+;;;; Background color remapping
+(defcustom codex-remap-light-backgrounds t
+  "Whether to remap light background colors to match the Emacs theme.
+Some CLI tools use near-white backgrounds for card-like UI elements.
+When non-nil, backgrounds with luminance above
+`codex-light-background-threshold' are replaced with
+`codex-card-background' (or an auto-computed equivalent)."
+  :type 'boolean
+  :group 'codex)
+
+(defcustom codex-card-background nil
+  "Background color for remapped card areas.
+When nil (the default), light backgrounds are stripped entirely.
+When a color string (e.g. \"#1a1b2e\"), used as the replacement."
+  :type '(choice (const :tag "Strip background" nil) color)
+  :group 'codex)
+
+(defcustom codex-light-background-threshold 0.5
+  "Luminance threshold above which backgrounds are considered too light.
+Colors with perceived luminance above this value (0.0–1.0) are
+remapped when `codex-remap-light-backgrounds' is non-nil."
+  :type 'number
+  :group 'codex)
+
 ;;;; Notification customization
 (defcustom codex-enable-notifications t
   "Whether to show notifications when Codex finishes and awaits input."
@@ -611,6 +635,9 @@ _BACKEND is the terminal backend type (should be \\='eat)."
   (setq-local eat--synchronize-scroll-function #'codex--eat-synchronize-scroll)
   (when (bound-and-true-p eat-terminal)
     (eval '(setf (eat-term-parameter eat-terminal 'ring-bell-function) #'codex--notify)))
+  (when codex-remap-light-backgrounds
+    (advice-add 'eat--process-output-queue :after
+                #'codex--remap-light-backgrounds-after-output))
   (sleep-for codex-startup-delay))
 
 (cl-defmethod codex--term-customize-faces ((_backend (eql eat)))
@@ -1149,6 +1176,70 @@ Codex subcommands run as separate processes."
           (set-window-parameter window 'no-delete-other-windows codex-no-delete-other-windows))))
 
     (pop-to-buffer buffer)))
+
+;;;; Background color remapping
+
+(defun codex--color-luminance (color)
+  "Return the perceived luminance (0.0–1.0) of COLOR.
+COLOR is a hex string like \"#EEEEEE\" or a named color."
+  (when-let* ((rgb (color-name-to-rgb color)))
+    (+ (* 0.299 (nth 0 rgb)) (* 0.587 (nth 1 rgb)) (* 0.114 (nth 2 rgb)))))
+
+(defun codex--compute-card-background ()
+  "Compute a card background slightly lighter than the default face."
+  (let* ((bg (or (face-background 'default) "#000000"))
+         (rgb (or (color-name-to-rgb bg) '(0.0 0.0 0.0)))
+         (lift 0.06))
+    (format "#%02x%02x%02x"
+            (round (* 255 (min 1.0 (+ (nth 0 rgb) lift))))
+            (round (* 255 (min 1.0 (+ (nth 1 rgb) lift))))
+            (round (* 255 (min 1.0 (+ (nth 2 rgb) lift)))))))
+
+(defun codex--strip-plist-key (plist key)
+  "Return a copy of PLIST with KEY and its value removed."
+  (let (result)
+    (while plist
+      (let ((k (pop plist))
+            (v (pop plist)))
+        (unless (eq k key)
+          (setq result (nconc result (list k v))))))
+    result))
+
+(defun codex--remap-light-backgrounds-in-region (beg end card-bg threshold)
+  "Replace light backgrounds between BEG and END with CARD-BG.
+CARD-BG is the replacement color, or nil to strip backgrounds entirely.
+Backgrounds with luminance above THRESHOLD are remapped."
+  (let ((pos beg))
+    (while (< pos end)
+      (let* ((next (or (next-single-property-change pos 'face nil end) end))
+             (face (get-text-property pos 'face))
+             (bg (and (consp face) (plist-get face :background))))
+        (when (and bg (> (or (codex--color-luminance bg) 0) threshold))
+          (let ((new-face (if card-bg
+                              (plist-put (copy-sequence face) :background card-bg)
+                            (codex--strip-plist-key face :background))))
+            (put-text-property pos next 'face new-face)
+            (when (get-text-property pos 'font-lock-face)
+              (put-text-property pos next 'font-lock-face new-face))))
+        (setq pos next)))))
+
+(defun codex--remap-light-backgrounds-after-output (buffer)
+  "Remap light backgrounds in BUFFER after terminal output.
+Intended as :after advice on `eat--process-output-queue'."
+  (when (and codex-remap-light-backgrounds
+             (buffer-live-p buffer))
+    (with-current-buffer buffer
+      (when (and (codex--buffer-p buffer)
+                 (bound-and-true-p eat-terminal))
+        (let ((beg (eat-term-beginning eat-terminal))
+              (end (eat-term-end eat-terminal))
+              (inhibit-read-only t)
+              (inhibit-modification-hooks t))
+          (when (and beg end)
+            (codex--remap-light-backgrounds-in-region
+             beg end
+             codex-card-background
+             codex-light-background-threshold)))))))
 
 ;;;; Notification system
 

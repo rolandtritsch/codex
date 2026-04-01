@@ -559,6 +559,63 @@
       (kill-buffer buf2)
       (kill-buffer buf3))))
 
+;;;; Background color remapping tests
+
+(ert-deftest codex-test-color-luminance-white ()
+  "White has luminance close to 1.0."
+  (should (> (codex--color-luminance "#ffffff") 0.99)))
+
+(ert-deftest codex-test-color-luminance-black ()
+  "Black has luminance 0.0."
+  (should (= (codex--color-luminance "#000000") 0.0)))
+
+(ert-deftest codex-test-color-luminance-eeeeee ()
+  "Near-white #EEEEEE has high luminance."
+  (should (> (codex--color-luminance "#EEEEEE") 0.9)))
+
+(ert-deftest codex-test-color-luminance-dark ()
+  "Dark color has low luminance."
+  (should (< (codex--color-luminance "#0d0e1c") 0.15)))
+
+(ert-deftest codex-test-compute-card-background ()
+  "Auto-computed card background is a valid hex color."
+  (let ((card (codex--compute-card-background)))
+    (should (string-match-p "^#[0-9a-f]\\{6\\}$" card))
+    (should-not (equal card "#000000"))))
+
+(ert-deftest codex-test-remap-strips-light-backgrounds ()
+  "Light backgrounds are stripped when card-bg is nil."
+  (with-temp-buffer
+    (insert "hello")
+    (put-text-property 1 6 'face '(:background "#EEEEEE" :inherit (eat-term-font-0)))
+    (codex--remap-light-backgrounds-in-region 1 6 nil 0.5)
+    (let ((face (get-text-property 1 'face)))
+      (should-not (plist-get face :background))
+      (should (equal (plist-get face :inherit) '(eat-term-font-0))))))
+
+(ert-deftest codex-test-remap-replaces-light-with-card-bg ()
+  "Light backgrounds are replaced when card-bg is a color."
+  (with-temp-buffer
+    (insert "hello")
+    (put-text-property 1 6 'face '(:background "#EEEEEE"))
+    (codex--remap-light-backgrounds-in-region 1 6 "#1c1d2b" 0.5)
+    (should (equal (plist-get (get-text-property 1 'face) :background) "#1c1d2b"))))
+
+(ert-deftest codex-test-remap-preserves-dark-backgrounds ()
+  "Dark backgrounds are left untouched."
+  (with-temp-buffer
+    (insert "hello")
+    (put-text-property 1 6 'face '(:background "#1a1a2e"))
+    (codex--remap-light-backgrounds-in-region 1 6 nil 0.5)
+    (should (equal (plist-get (get-text-property 1 'face) :background) "#1a1a2e"))))
+
+(ert-deftest codex-test-remap-no-face ()
+  "Text without faces is left untouched."
+  (with-temp-buffer
+    (insert "hello")
+    (codex--remap-light-backgrounds-in-region 1 6 nil 0.5)
+    (should-not (get-text-property 1 'face))))
+
 (provide 'codex-test)
 
 ;;; codex-test.el ends here
