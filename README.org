@@ -138,7 +138,7 @@ The user option ~codex-toggle-auto-select~ controls whether ~codex-toggle~ autom
 
 The user option ~codex-optimize-window-resize~ controls whether terminal reflows are suppressed when only the window height changes.  The default is ~t~.  This prevents unnecessary redraws when you resize frames vertically.
 
-The user option ~codex-display-window-fn~ specifies the function used to display the Codex window.  It must accept a buffer argument.  The default is ~codex-display-buffer-below~, which displays the Codex buffer below the currently selected window.
+The user option ~codex-display-window-fn~ specifies the function used to display the Codex window.  It must accept a buffer argument.  The default is ~codex-display-buffer-same-window~, which displays the Codex buffer in the current window.  An alternative ~codex-display-buffer-below~ is also provided, which displays it below the currently selected window.
 
 ** Images
 :PROPERTIES:
@@ -284,7 +284,7 @@ The commands ~codex-send-1~, ~codex-send-2~, and ~codex-send-3~ send the corresp
 #+findex: codex-select-buffer
 #+findex: codex-toggle-read-only-mode
 
-The command ~codex-toggle~ shows or hides the Codex window.  If the Codex buffer is currently visible, it deletes the window.  If it is hidden, it displays it below the current window.  The ~codex-no-delete-other-windows~ parameter is applied to the window.  If ~codex-toggle-auto-select~ is non-nil, focus moves to the Codex window when it is shown ([[#h:window-management-options][Window management]]).
+The command ~codex-toggle~ shows or hides the Codex window.  If the Codex buffer is currently visible, it deletes the window.  If it is hidden, it displays it using ~codex-display-window-fn~.  The ~codex-no-delete-other-windows~ parameter is applied to the window.  If ~codex-toggle-auto-select~ is non-nil, focus moves to the Codex window when it is shown ([[#h:window-management-options][Window management]]).
 
 The command ~codex-switch-to-buffer~ switches to the Codex buffer for the current project.  If multiple instances are running, you are prompted to select one.  With a prefix argument, it shows all Codex instances across all directories.
 
@@ -312,11 +312,14 @@ The command ~codex-cycle-permissions~ sends =/permissions= to the Codex TUI to c
 :END:
 
 #+findex: codex-default-notification
+#+findex: codex-display-buffer-same-window
 #+findex: codex-display-buffer-below
 
 The function ~codex-default-notification~ is the default notification handler.  It takes a title and message, displays them in the echo area, and pulses the mode line three times.  You can replace this by setting ~codex-notification-function~ to a custom function, for example one that uses =alert.el= or the system notification center ([[#h:notifications][Notifications]]).
 
-The function ~codex-display-buffer-below~ displays the Codex buffer below the currently selected window using ~display-buffer-below-selected~.  It is the default value of ~codex-display-window-fn~ ([[#h:window-management-options][Window management]]).
+The function ~codex-display-buffer-same-window~ displays the Codex buffer in the current window using ~display-buffer-same-window~.  It is the default value of ~codex-display-window-fn~ ([[#h:window-management-options][Window management]]).
+
+The function ~codex-display-buffer-below~ displays the Codex buffer below the currently selected window using ~display-buffer-below-selected~.
 
 ** Hook handling
 :PROPERTIES:

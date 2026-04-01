@@ -1021,7 +1021,11 @@ Returns a list of strings to pass as command-line arguments."
   "Display the Codex BUFFER below the currently selected one."
   (display-buffer buffer '((display-buffer-below-selected))))
 
-(defcustom codex-display-window-fn #'codex-display-buffer-below
+(defun codex-display-buffer-same-window (buffer)
+  "Display the Codex BUFFER in the current window."
+  (display-buffer buffer '((display-buffer-same-window))))
+
+(defcustom codex-display-window-fn #'codex-display-buffer-same-window
   "Function used to display the Codex window.
 Must be callable with a buffer as its parameter."
   :type 'function
@@ -1514,10 +1518,11 @@ With prefix ARG, switch to the Codex buffer after sending."
     (if codex-buffer
         (if (get-buffer-window codex-buffer)
             (delete-window (get-buffer-window codex-buffer))
-          (let ((window (display-buffer codex-buffer '((display-buffer-below-selected)))))
-            (set-window-parameter window 'no-delete-other-windows codex-no-delete-other-windows)
-            (when codex-toggle-auto-select
-              (select-window window))))
+          (let ((window (funcall codex-display-window-fn codex-buffer)))
+            (when window
+              (set-window-parameter window 'no-delete-other-windows codex-no-delete-other-windows)
+              (when codex-toggle-auto-select
+                (select-window window)))))
       (codex--show-not-running-message))))
 
 ;;;###autoload
