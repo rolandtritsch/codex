@@ -1,0 +1,437 @@
+#+title: codex.el: Emacs integration for OpenAI Codex CLI
+#+author: Pablo Stafforini
+#+email: pablo@stafforini.com
+#+language: en
+#+options: ':t toc:t author:t email:t num:t
+#+startup: content
+#+export_file_name: codex.info
+#+texinfo_filename: codex.info
+#+texinfo_dir_category: Emacs misc features
+#+texinfo_dir_title: Codex: (codex)
+#+texinfo_dir_desc: Emacs integration for OpenAI Codex CLI
+
+This manual describes the features and customization options for the Emacs Lisp file =codex.el=.
+
+* Overview
+:PROPERTIES:
+:CUSTOM_ID: h:overview
+:END:
+
+=codex.el= provides an Emacs interface to the [[https://github.com/openai/codex][OpenAI Codex CLI]], allowing you to interact with the Codex agent directly from within Emacs.  The package is modeled after =claude-code.el= and shares a similar architecture and design philosophy.
+
+The package embeds the Codex CLI inside an Emacs terminal emulator buffer (either =eat= or =vterm=), giving you a full-featured TUI experience without leaving your editor.  You can start, stop, and manage multiple Codex instances across different projects, send commands and code from any buffer, toggle the Codex window on and off, and access all of the CLI's slash commands through a transient menu.
+
+The main capabilities of =codex.el= can be grouped thematically:
+
+- *Session management* --- start Codex in the current project, resume or fork previous sessions, run multiple named instances side by side, and kill instances individually or all at once.
+- *Sending commands and context* --- send freeform commands, send commands annotated with file and line context, send the active region or entire buffer, send file paths and images, and ask Codex to fix errors at point.
+- *TUI interaction* --- send return, escape, and numeric responses to the Codex TUI; queue follow-up prompts; edit previous messages; inject mid-turn instructions; and open the header search overlay.
+- *Window and buffer management* --- toggle the Codex window, switch between instances, select from all running instances, and toggle read-only mode.
+- *Hooks and notifications* --- auto-configure the Codex CLI hooks system so that Emacs receives lifecycle events (session start, tool use, stop); trigger desktop notifications when Codex finishes and awaits input.
+- *Transient menus* --- a main command menu and a slash commands menu, both accessible from the keyboard.
+- *Model and configuration* --- change the model, reasoning effort, sandbox mode, approval policy, and profile on the fly through transient infixes.
+
+The package requires Emacs 30.0 or later, =transient= 0.9.3 or later, and =inheritenv=.  You must also have one of the supported terminal emulator packages installed: =eat= (the default) or =vterm=.
+
+* User options
+:PROPERTIES:
+:CUSTOM_ID: h:user-options
+:END:
+
+** Core settings
+:PROPERTIES:
+:CUSTOM_ID: h:core-settings
+:END:
+
+#+vindex: codex-program
+#+vindex: codex-program-switches
+#+vindex: codex-terminal-backend
+#+vindex: codex-use-alt-screen
+#+vindex: codex-term-name
+#+vindex: codex-startup-delay
+#+vindex: codex-confirm-kill
+
+The user option ~codex-program~ specifies the path to the Codex binary.  The default value is ~"codex"~, which relies on the binary being in your ~PATH~.  Change this if you have installed Codex to a non-standard location.
+
+The user option ~codex-program-switches~ is a list of extra CLI flags to pass to Codex on every invocation.  The default value is ~nil~.  Use this for flags that you always want applied but that are not covered by the dedicated user options below.
+
+The user option ~codex-terminal-backend~ selects which terminal emulator to use for the Codex REPL.  The choices are ~eat~ (the default) and ~vterm~.  The =eat= backend is recommended as it integrates more cleanly with Emacs and does not require compiling a dynamic module.
+
+The user option ~codex-use-alt-screen~ controls whether Codex runs in its default alternate-screen TUI mode.  When non-nil (the default), Codex uses the alt screen.  When nil, Codex runs with ~--no-alt-screen~ for inline scrollback mode.
+
+The user option ~codex-term-name~ sets the terminal type reported to Codex.  The default value is ~"xterm-256color"~.  You would change this only if your terminal environment requires a different ~TERM~ value.
+
+The user option ~codex-startup-delay~ is a number of seconds to wait after starting the Codex process before displaying the buffer.  The default is ~0.1~.  Increasing this value can help fix terminal layout issues that occur when the buffer is displayed before Codex has fully initialized.
+
+The user option ~codex-confirm-kill~ controls whether ~codex-kill~ and ~codex-kill-all~ ask for confirmation before killing instances.  The default is ~t~.  Set it to ~nil~ if you prefer to kill instances without a prompt.
+
+** Sandbox and approval
+:PROPERTIES:
+:CUSTOM_ID: h:sandbox-and-approval
+:END:
+
+#+vindex: codex-sandbox-mode
+#+vindex: codex-approval-policy
+#+vindex: codex-full-auto
+
+The user option ~codex-sandbox-mode~ controls the sandboxing level for Codex.  When ~nil~ (the default), the CLI's own default is used.  The other choices are ~read-only~, ~workspace-write~, and ~danger-full-access~, which correspond to the CLI's ~--sandbox~ flag values.  This option is ignored when ~codex-full-auto~ is non-nil.
+
+The user option ~codex-approval-policy~ sets the approval policy for tool use.  When ~nil~ (the default), the CLI default applies.  The choices are ~untrusted~, ~on-request~, and ~never~, corresponding to the ~--ask-for-approval~ flag.  This option is also ignored when ~codex-full-auto~ is non-nil.
+
+The user option ~codex-full-auto~ enables fully autonomous mode by passing ~--full-auto~ to Codex.  The default is ~nil~.  When non-nil, this overrides both ~codex-sandbox-mode~ and ~codex-approval-policy~.  Use with caution.
+
+** Model and profile
+:PROPERTIES:
+:CUSTOM_ID: h:model-and-profile
+:END:
+
+#+vindex: codex-model
+#+vindex: codex-profile
+#+vindex: codex-reasoning-effort
+
+The user option ~codex-model~ specifies a model override (e.g., ~"gpt-5.4"~).  The default is ~nil~, which uses the CLI's default model.
+
+The user option ~codex-profile~ names a configuration profile.  The default is ~nil~, meaning the CLI default profile is used.  Profiles allow you to maintain separate sets of configuration for different workflows.
+
+The user option ~codex-reasoning-effort~ overrides the reasoning effort level.  The default is ~nil~.  When set to a string value, it is passed via the ~--reasoning-effort~ flag.
+
+** Hooks integration
+:PROPERTIES:
+:CUSTOM_ID: h:hooks-integration
+:END:
+
+#+vindex: codex-enable-hooks
+#+vindex: codex-hooks-config-path
+#+vindex: codex-hooks-json-path
+
+The user option ~codex-enable-hooks~ controls whether =codex.el= automatically configures the Codex CLI hooks system.  The default is ~t~.  When enabled, activating ~codex-mode~ ensures that ~config.toml~ has ~codex_hooks = true~ under ~[features]~ and that ~hooks.json~ contains entries for all supported hook types.
+
+The user option ~codex-hooks-config-path~ is the path to the Codex ~config.toml~ file.  The default is ~"~/.codex/config.toml"~.
+
+The user option ~codex-hooks-json-path~ is the path to the Codex ~hooks.json~ file.  The default is ~"~/.codex/hooks.json"~.
+
+** Notifications
+:PROPERTIES:
+:CUSTOM_ID: h:notifications
+:END:
+
+#+vindex: codex-enable-notifications
+#+vindex: codex-notification-function
+
+The user option ~codex-enable-notifications~ controls whether notifications are shown when Codex finishes a task and is waiting for input.  The default is ~t~.  Notifications are triggered by bell characters from the terminal or by ~Stop~ hook events.
+
+The user option ~codex-notification-function~ specifies the function called for notifications.  The function receives two arguments: a title string and a message string.  The default is ~codex-default-notification~, which displays a message in the echo area and pulses the mode line ([[#h:notification-functions][Notification functions]]).
+
+** Window management
+:PROPERTIES:
+:CUSTOM_ID: h:window-management-options
+:END:
+
+#+vindex: codex-no-delete-other-windows
+#+vindex: codex-toggle-auto-select
+#+vindex: codex-optimize-window-resize
+#+vindex: codex-display-window-fn
+
+The user option ~codex-no-delete-other-windows~ prevents Codex windows from being deleted by ~delete-other-windows~.  The default is ~nil~.  Set this to ~t~ if you want the Codex window to persist when you use =C-x 1= or similar commands.
+
+The user option ~codex-toggle-auto-select~ controls whether ~codex-toggle~ automatically selects the Codex window after opening it.  The default is ~nil~, meaning the window is displayed but focus stays in the current window.
+
+The user option ~codex-optimize-window-resize~ controls whether terminal reflows are suppressed when only the window height changes.  The default is ~t~.  This prevents unnecessary redraws when you resize frames vertically.
+
+The user option ~codex-display-window-fn~ specifies the function used to display the Codex window.  It must accept a buffer argument.  The default is ~codex-display-buffer-below~, which displays the Codex buffer below the currently selected window.
+
+** Images
+:PROPERTIES:
+:CUSTOM_ID: h:images
+:END:
+
+#+vindex: codex-default-images
+
+The user option ~codex-default-images~ is a list of image file paths to attach at startup via the ~--image~ flag.  The default is ~nil~.  Use this to always include certain screenshots or diagrams as context.
+
+** Emacs hooks
+:PROPERTIES:
+:CUSTOM_ID: h:emacs-hooks
+:END:
+
+#+vindex: codex-start-hook
+#+vindex: codex-process-environment-functions
+#+vindex: codex-event-hook
+
+The hook ~codex-start-hook~ runs after a Codex instance starts.  Use it to perform additional setup in the Codex buffer, such as enabling minor modes or customizing keybindings.
+
+The abnormal hook ~codex-process-environment-functions~ lets you inject environment variables into the Codex process.  Each function receives two arguments: the Codex buffer name and the project directory.  Each function should return a list of strings in ~"VAR=VALUE"~ format.
+
+The hook ~codex-event-hook~ runs when the Codex CLI triggers lifecycle events through the hooks system.  Functions on this hook are called with a single plist argument containing ~:type~, ~:buffer-name~, ~:json-data~, and ~:args~.
+
+** Eat terminal settings
+:PROPERTIES:
+:CUSTOM_ID: h:eat-terminal-settings
+:END:
+
+#+vindex: codex-eat-read-only-mode-cursor-type
+
+The user option ~codex-eat-read-only-mode-cursor-type~ specifies the cursor appearance when the eat terminal is in read-only mode.  The value is a list of the form ~(CURSOR-ON BLINKING-FREQUENCY CURSOR-OFF)~.  The default is ~(box nil nil)~, which shows a non-blinking filled box cursor.
+
+The package also defines faces for the eat terminal that inherit from the corresponding =eat= faces: ~codex-eat-prompt-annotation-running-face~, ~codex-eat-prompt-annotation-success-face~, ~codex-eat-prompt-annotation-failure-face~, ~codex-eat-term-bold-face~, ~codex-eat-term-faint-face~, ~codex-eat-term-italic-face~, ~codex-eat-term-slow-blink-face~, ~codex-eat-term-fast-blink-face~, and font faces ~codex-eat-term-font-0-face~ through ~codex-eat-term-font-9-face~.  Customize these faces if you want the Codex terminal to look different from other eat buffers.
+
+** Vterm terminal settings
+:PROPERTIES:
+:CUSTOM_ID: h:vterm-terminal-settings
+:END:
+
+#+vindex: codex-vterm-buffer-multiline-output
+#+vindex: codex-vterm-multiline-delay
+
+The user option ~codex-vterm-buffer-multiline-output~ controls whether multi-line terminal output is buffered to prevent flickering.  The default is ~t~.  When enabled, rapid successive output chunks containing cursor movement sequences are accumulated and flushed as a single update.
+
+The user option ~codex-vterm-multiline-delay~ sets the delay (in seconds) before processing buffered vterm output.  The default is ~0.01~.  Increase this if you still see flickering with the buffering enabled.
+
+* Commands
+:PROPERTIES:
+:CUSTOM_ID: h:commands
+:END:
+
+** Session management
+:PROPERTIES:
+:CUSTOM_ID: h:session-management
+:END:
+
+#+findex: codex
+#+findex: codex-start-in-directory
+#+findex: codex-resume
+#+findex: codex-fork
+#+findex: codex-new-instance
+#+findex: codex-kill
+#+findex: codex-kill-all
+
+The command ~codex~ starts a Codex instance in the current project root or, if not in a project, in the directory of the current file.  If a Codex instance is already running for that directory, you are prompted for an instance name so that multiple instances can coexist.  With a single prefix argument (=C-u=), the cursor switches to the Codex buffer after starting.  With a double prefix argument (=C-u C-u=), you are prompted for the project directory.
+
+The command ~codex-start-in-directory~ always prompts for a directory before starting Codex, regardless of the current project.  With a prefix argument, it also switches to the Codex buffer.
+
+The command ~codex-resume~ resumes a previous Codex session by running ~codex resume~.  You are always prompted for an instance name.  With a prefix argument, it passes ~--last~ to resume the most recent session.
+
+The command ~codex-fork~ forks a previous session by running ~codex fork~.  Like ~codex-resume~, it prompts for an instance name and accepts a prefix argument for ~--last~.
+
+The command ~codex-new-instance~ creates a new Codex instance and always prompts for an instance name, even if no other instances are running.  This is useful when you want to name your instance from the start.  It accepts the same prefix argument conventions as ~codex~.
+
+The command ~codex-kill~ kills the Codex instance associated with the current directory.  If multiple instances are running for the directory, you are prompted to select one.  If ~codex-confirm-kill~ is non-nil (the default), confirmation is required.
+
+The command ~codex-kill-all~ kills all Codex instances across all directories.  It reports the number of instances killed and, like ~codex-kill~, respects the ~codex-confirm-kill~ setting.
+
+** Sending commands and context
+:PROPERTIES:
+:CUSTOM_ID: h:sending-commands
+:END:
+
+#+findex: codex-send-command
+#+findex: codex-send-command-with-context
+#+findex: codex-send-region
+#+findex: codex-send-buffer-file
+#+findex: codex-send-image
+#+findex: codex-fix-error-at-point
+
+The command ~codex-send-command~ reads a command from the minibuffer and sends it to the Codex instance for the current project.  Input history is maintained in ~codex-command-history~.  With a prefix argument, the cursor switches to the Codex buffer after sending.
+
+The command ~codex-send-command-with-context~ works like ~codex-send-command~ but appends a file reference (in ~@file:line~ format) to the command.  If a region is active, it includes the line range of the region.  This is particularly useful when you want to direct Codex's attention to a specific location in your code.
+
+The command ~codex-send-region~ sends the active region to Codex, or the entire buffer if no region is active.  With a single prefix argument, it prompts for instructions to prepend to the text.  With a double prefix argument, it also switches to the Codex buffer.
+
+The command ~codex-send-buffer-file~ sends the file path of the current buffer to Codex, prefixed with ~@~.  This tells Codex to read the file.  With a prefix argument, it prompts for instructions to include alongside the file reference.  With a double prefix argument, it also switches to the Codex buffer.
+
+The command ~codex-send-image~ prompts for an image file and sends its path to Codex prefixed with ~@~.  Use this to attach screenshots or diagrams as context for your request.
+
+The command ~codex-fix-error-at-point~ examines the error at point (using Flycheck or ~help-at-pt~), formats it with the file and line reference, and sends it to Codex with instructions to fix the error.  With a prefix argument, it switches to the Codex buffer.
+
+** TUI key sequences
+:PROPERTIES:
+:CUSTOM_ID: h:tui-key-sequences
+:END:
+
+#+findex: codex-send-return
+#+findex: codex-send-escape
+#+findex: codex-edit-previous-message
+#+findex: codex-queue-followup
+#+findex: codex-inject-mid-turn
+#+findex: codex-header-search
+#+findex: codex-send-1
+#+findex: codex-send-2
+#+findex: codex-send-3
+
+These commands send specific key sequences to the Codex TUI, allowing you to interact with Codex without switching to the terminal buffer.
+
+The command ~codex-send-return~ sends a return key press.  This is equivalent to pressing =Enter= in the Codex TUI and is often used to confirm actions.
+
+The command ~codex-send-escape~ sends an escape key press, typically used to cancel or dismiss prompts.  In eat buffers, =C-g= is also bound to this command.
+
+The command ~codex-edit-previous-message~ sends =Esc Esc= to walk back and edit the previous message.  After sending the sequence, it switches to the Codex buffer so you can edit inline.
+
+The command ~codex-queue-followup~ sends a =Tab= key press to queue a follow-up prompt while Codex is still working.
+
+The command ~codex-inject-mid-turn~ sends a =Return= key press to inject instructions while Codex is in the middle of processing.
+
+The command ~codex-header-search~ sends =Ctrl+K= to open the header search overlay in the Codex TUI.
+
+The commands ~codex-send-1~, ~codex-send-2~, and ~codex-send-3~ send the corresponding digit to the Codex TUI.  These are useful for selecting numbered options in menus.
+
+** Buffer and window management
+:PROPERTIES:
+:CUSTOM_ID: h:buffer-window-management
+:END:
+
+#+findex: codex-toggle
+#+findex: codex-switch-to-buffer
+#+findex: codex-select-buffer
+#+findex: codex-toggle-read-only-mode
+
+The command ~codex-toggle~ shows or hides the Codex window.  If the Codex buffer is currently visible, it deletes the window.  If it is hidden, it displays it below the current window.  The ~codex-no-delete-other-windows~ parameter is applied to the window.  If ~codex-toggle-auto-select~ is non-nil, focus moves to the Codex window when it is shown ([[#h:window-management-options][Window management]]).
+
+The command ~codex-switch-to-buffer~ switches to the Codex buffer for the current project.  If multiple instances are running, you are prompted to select one.  With a prefix argument, it shows all Codex instances across all directories.
+
+The command ~codex-select-buffer~ prompts you to select from all running Codex instances across all directories and switches to the selected one.
+
+The command ~codex-toggle-read-only-mode~ toggles the terminal between read-only mode and interactive mode.  In read-only mode (eat's Emacs mode or vterm's copy mode), you can navigate and copy text using normal Emacs keybindings.  In interactive mode, keystrokes are sent to the terminal.
+
+** Model and permissions
+:PROPERTIES:
+:CUSTOM_ID: h:model-and-permissions
+:END:
+
+#+findex: codex-cycle-permissions
+
+The command ~codex-cycle-permissions~ sends =/permissions= to the Codex TUI to cycle through approval modes.
+
+* Functions
+:PROPERTIES:
+:CUSTOM_ID: h:functions
+:END:
+
+** Notification functions
+:PROPERTIES:
+:CUSTOM_ID: h:notification-functions
+:END:
+
+#+findex: codex-default-notification
+#+findex: codex-display-buffer-below
+
+The function ~codex-default-notification~ is the default notification handler.  It takes a title and message, displays them in the echo area, and pulses the mode line three times.  You can replace this by setting ~codex-notification-function~ to a custom function, for example one that uses =alert.el= or the system notification center ([[#h:notifications][Notifications]]).
+
+The function ~codex-display-buffer-below~ displays the Codex buffer below the currently selected window using ~display-buffer-below-selected~.  It is the default value of ~codex-display-window-fn~ ([[#h:window-management-options][Window management]]).
+
+** Hook handling
+:PROPERTIES:
+:CUSTOM_ID: h:hook-handling
+:END:
+
+#+findex: codex-handle-hook
+
+The function ~codex-handle-hook~ is the entry point for all Codex CLI hook events.  It is called by the =codex-hook-wrapper= shell script via =emacsclient=.  The function receives a hook type (e.g., ~"Stop"~, ~"PreToolUse"~), a buffer name, and optional additional arguments.  It constructs a plist and runs ~codex-event-hook~ with it.  For ~"Stop"~ events, it also triggers a notification ([[#h:notifications][Notifications]]).
+
+* Transient menus
+:PROPERTIES:
+:CUSTOM_ID: h:transient-menus
+:END:
+
+#+findex: codex-transient
+#+findex: codex-slash-commands
+
+=codex.el= provides two transient menus for convenient access to its commands.
+
+The transient ~codex-transient~ is the main command menu, organized into five columns: Start/Stop Codex, Send Commands, Manage Codex, Quick Responses, and Model & Config.  The Model & Config column contains transient infixes that let you change ~codex-model~, ~codex-reasoning-effort~, ~codex-sandbox-mode~, ~codex-approval-policy~, and ~codex-profile~ on the fly without modifying your configuration.
+
+The transient ~codex-slash-commands~ provides quick access to all Codex CLI slash commands, organized into four columns: Core (help, clear, compact, status, new, quit), Navigation & Review (diff, review, fork, resume, copy), Configuration (permissions, model, fast, plan, init, statusline, theme, debug config), and Features & Tools (experimental, MCP, agent, apps, mention, ps).
+
+Both transients are available from the ~codex-command-map~ keymap, bound to =m= and =/= respectively.
+
+* Keymap
+:PROPERTIES:
+:CUSTOM_ID: h:keymap
+:END:
+
+The ~codex-command-map~ keymap provides quick access to all commands.  You should bind this map to a prefix key of your choice, for example:
+
+#+begin_src emacs-lisp
+(global-set-key (kbd "C-c x") codex-command-map)
+#+end_src
+
+The default bindings are:
+
+| Key   | Command                            |
+|-------+------------------------------------|
+| =c=   | ~codex~                            |
+| =d=   | ~codex-start-in-directory~         |
+| =R=   | ~codex-resume~                     |
+| =f=   | ~codex-fork~                       |
+| =i=   | ~codex-new-instance~               |
+| =k=   | ~codex-kill~                       |
+| =K=   | ~codex-kill-all~                   |
+| =s=   | ~codex-send-command~               |
+| =x=   | ~codex-send-command-with-context~  |
+| =r=   | ~codex-send-region~                |
+| =o=   | ~codex-send-buffer-file~           |
+| =I=   | ~codex-send-image~                 |
+| =e=   | ~codex-fix-error-at-point~         |
+| =/=   | ~codex-slash-commands~             |
+| =t=   | ~codex-toggle~                     |
+| =b=   | ~codex-switch-to-buffer~           |
+| =B=   | ~codex-select-buffer~              |
+| =z=   | ~codex-toggle-read-only-mode~      |
+| =M=   | ~codex-cycle-permissions~          |
+| =y=   | ~codex-send-return~                |
+| =n=   | ~codex-send-escape~                |
+| =E=   | ~codex-edit-previous-message~      |
+| =TAB= | ~codex-queue-followup~             |
+| =1=   | ~codex-send-1~                     |
+| =2=   | ~codex-send-2~                     |
+| =3=   | ~codex-send-3~                     |
+| =m=   | ~codex-transient~                  |
+
+* Minor mode
+:PROPERTIES:
+:CUSTOM_ID: h:minor-mode
+:END:
+
+#+findex: codex-mode
+
+The global minor mode ~codex-mode~ enables the Codex integration.  When activated, it auto-configures the Codex CLI hooks system by ensuring that ~config.toml~ and ~hooks.json~ are set up correctly ([[#h:hooks-integration][Hooks integration]]).  The mode adds a =Codex= lighter to the mode line.
+
+Activate it with:
+
+#+begin_src emacs-lisp
+(codex-mode 1)
+#+end_src
+
+Or add it to your init file to enable it on startup.
+
+* Hooks system
+:PROPERTIES:
+:CUSTOM_ID: h:hooks-system
+:END:
+
+The Codex CLI supports a hooks mechanism that notifies external programs of lifecycle events.  =codex.el= takes advantage of this by shipping a =bin/codex-hook-wrapper= shell script that calls =emacsclient= to relay events back to Emacs.
+
+When ~codex-enable-hooks~ is non-nil and ~codex-mode~ is activated, =codex.el= automatically:
+
+1. Ensures that ~config.toml~ has ~codex_hooks = true~ under the ~[features]~ section.
+2. Ensures that ~hooks.json~ has entries for all five supported hook types: ~Stop~, ~SessionStart~, ~PreToolUse~, ~PostToolUse~, and ~UserPromptSubmit~.
+
+Each hook entry points to the =codex-hook-wrapper= script, which reads JSON from stdin and passes it to ~codex-handle-hook~ via =emacsclient=.  Existing user-defined hooks in ~hooks.json~ are preserved; =codex.el= only appends its own entries if they are not already present.
+
+You can respond to these events by adding functions to ~codex-event-hook~ ([[#h:emacs-hooks][Emacs hooks]]).
+
+* Indices
+:PROPERTIES:
+:CUSTOM_ID: h:indices
+:END:
+
+** Function index
+:PROPERTIES:
+:INDEX: fn
+:CUSTOM_ID: h:function-index
+:END:
+
+** Variable index
+:PROPERTIES:
+:INDEX: vr
+:CUSTOM_ID: h:variable-index
+:END:
