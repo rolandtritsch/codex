@@ -345,7 +345,7 @@ The value is a list of form (CURSOR-ON BLINKING-FREQUENCY CURSOR-OFF)."
 ;;;###autoload (autoload 'codex-transient "codex" nil t)
 (transient-define-prefix codex-transient ()
   "Codex command menu."
-  ["Codex Commands"
+  ["Codex Menu"
    ["Start/Stop Codex"
     ("c" "Start Codex" codex)
     ("d" "Start in directory" codex-start-in-directory)
@@ -387,7 +387,7 @@ The value is a list of form (CURSOR-ON BLINKING-FREQUENCY CURSOR-OFF)."
 (transient-define-infix codex--infix-model ()
   :class 'transient-lisp-variable
   :variable 'codex-model
-  :key "gm"
+  :key "g m"
   :description "Model"
   :reader (lambda (_prompt _initial-input _history)
             (read-string "Model (empty for default): " codex-model)))
@@ -395,7 +395,7 @@ The value is a list of form (CURSOR-ON BLINKING-FREQUENCY CURSOR-OFF)."
 (transient-define-infix codex--infix-reasoning-effort ()
   :class 'transient-lisp-variable
   :variable 'codex-reasoning-effort
-  :key "ge"
+  :key "g e"
   :description "Reasoning effort"
   :reader (lambda (_prompt _initial-input _history)
             (let ((val (read-string "Reasoning effort (empty for default): " codex-reasoning-effort)))
@@ -404,7 +404,7 @@ The value is a list of form (CURSOR-ON BLINKING-FREQUENCY CURSOR-OFF)."
 (transient-define-infix codex--infix-sandbox-mode ()
   :class 'transient-lisp-variable
   :variable 'codex-sandbox-mode
-  :key "gs"
+  :key "g s"
   :description "Sandbox mode"
   :reader (lambda (_prompt _initial-input _history)
             (let ((choice (completing-read "Sandbox mode: "
@@ -419,7 +419,7 @@ The value is a list of form (CURSOR-ON BLINKING-FREQUENCY CURSOR-OFF)."
 (transient-define-infix codex--infix-approval-policy ()
   :class 'transient-lisp-variable
   :variable 'codex-approval-policy
-  :key "ga"
+  :key "g a"
   :description "Approval policy"
   :reader (lambda (_prompt _initial-input _history)
             (let ((choice (completing-read "Approval policy: "
@@ -434,7 +434,7 @@ The value is a list of form (CURSOR-ON BLINKING-FREQUENCY CURSOR-OFF)."
 (transient-define-infix codex--infix-profile ()
   :class 'transient-lisp-variable
   :variable 'codex-profile
-  :key "gp"
+  :key "g p"
   :description "Profile"
   :reader (lambda (_prompt _initial-input _history)
             (let ((val (read-string "Profile (empty for default): " codex-profile)))

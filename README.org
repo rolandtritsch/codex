@@ -337,7 +337,7 @@ The function ~codex-handle-hook~ is the entry point for all Codex CLI hook event
 
 =codex.el= provides two transient menus for convenient access to its commands.
 
-The transient ~codex-transient~ is the main command menu, organized into five columns: Start/Stop Codex, Send Commands, Manage Codex, Quick Responses, and Model & Config.  The Model & Config column contains transient infixes that let you change ~codex-model~, ~codex-reasoning-effort~, ~codex-sandbox-mode~, ~codex-approval-policy~, and ~codex-profile~ on the fly without modifying your configuration.
+The transient ~codex-transient~ is the main command menu (titled "Codex Menu"), organized into five columns: Start/Stop Codex, Send Commands, Manage Codex, Quick Responses, and Model & Config.  The Model & Config column contains transient infixes that let you change ~codex-model~, ~codex-reasoning-effort~, ~codex-sandbox-mode~, ~codex-approval-policy~, and ~codex-profile~ on the fly without modifying your configuration.  These infixes use two-key sequences prefixed with =g= (e.g. =g m= for model, =g e= for reasoning effort, =g s= for sandbox mode, =g a= for approval policy, =g p= for profile).
 
 The transient ~codex-slash-commands~ provides quick access to all Codex CLI slash commands, organized into four columns: Core (help, clear, compact, status, new, quit), Navigation & Review (diff, review, fork, resume, copy), Configuration (permissions, model, fast, plan, init, statusline, theme, debug config), and Features & Tools (experimental, MCP, agent, apps, mention, ps).
 
