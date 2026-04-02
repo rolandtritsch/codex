@@ -325,8 +325,20 @@ The value is a list of form (CURSOR-ON BLINKING-FREQUENCY CURSOR-OFF)."
 (defvar codex--directory-buffer-map (make-hash-table :test 'equal)
   "Hash table mapping directories to user-selected Codex buffers.")
 
-(defvar codex--window-widths nil
-  "Hash table mapping windows to their last known widths for eat terminals.")
+(defvar codex--managed-advice-refcounts (make-hash-table :test 'equal)
+  "Reference counts for global advice registrations shared across Codex buffers.")
+
+(defvar codex--window-widths (make-hash-table :test 'eq :weakness 'key)
+  "Hash table mapping windows to their last known widths for Codex terminals.")
+
+(defvar-local codex--managed-advice-specs nil
+  "Advice registrations owned by the current Codex buffer.")
+
+(defvar-local codex--buffer-directory nil
+  "Directory associated with the current Codex buffer.")
+
+(defvar-local codex--buffer-instance-name nil
+  "Instance name associated with the current Codex buffer.")
 
 (defvar codex-command-history nil
   "History of commands sent to Codex.")
@@ -513,6 +525,12 @@ Returns the buffer containing the terminal.")
 (cl-defgeneric codex--term-send-string (backend string)
   "Send STRING to the terminal using BACKEND.")
 
+(cl-defgeneric codex--term-send-return (backend)
+  "Send <return> to the terminal using BACKEND.")
+
+(cl-defgeneric codex--term-send-escape (backend)
+  "Send <escape> to the terminal using BACKEND.")
+
 (cl-defgeneric codex--term-kill-process (backend buffer)
   "Kill the terminal process in BUFFER using BACKEND.")
 
@@ -553,6 +571,8 @@ Returns the buffer containing the terminal.")
 (declare-function eat-semi-char-mode "eat")
 (declare-function eat-term-display-beginning "eat" (terminal))
 (declare-function eat-term-display-cursor "eat" (terminal))
+(declare-function eat-term-beginning "eat" (terminal))
+(declare-function eat-term-end "eat" (terminal))
 (declare-function eat-term-live-p "eat" (terminal))
 (declare-function eat-term-parameter "eat" (terminal parameter) t)
 (declare-function eat-term-redisplay "eat" (terminal))
@@ -576,6 +596,16 @@ _BACKEND is the terminal backend type (should be \\='eat)."
   "Send STRING to eat terminal.
 _BACKEND is the terminal backend type (should be \\='eat)."
   (eat-term-send-string eat-terminal string))
+
+(cl-defmethod codex--term-send-return ((_backend (eql eat)))
+  "Send <return> to eat terminal.
+_BACKEND is the terminal backend type (should be \\='eat)."
+  (eat-term-send-string eat-terminal (kbd "RET")))
+
+(cl-defmethod codex--term-send-escape ((_backend (eql eat)))
+  "Send <escape> to eat terminal.
+_BACKEND is the terminal backend type (should be \\='eat)."
+  (eat-term-send-string eat-terminal (kbd "ESC")))
 
 (cl-defmethod codex--term-kill-process ((_backend (eql eat)) buffer)
   "Kill the eat terminal process in BUFFER.
@@ -636,8 +666,9 @@ _BACKEND is the terminal backend type (should be \\='eat)."
   (when (bound-and-true-p eat-terminal)
     (eval '(setf (eat-term-parameter eat-terminal 'ring-bell-function) #'codex--notify)))
   (when codex-remap-light-backgrounds
-    (advice-add 'eat--process-output-queue :after
-                #'codex--remap-light-backgrounds-after-output))
+    (codex--acquire-managed-advice 'eat--process-output-queue
+                                   :after
+                                   #'codex--remap-light-backgrounds-after-output))
   (sleep-for codex-startup-delay))
 
 (cl-defmethod codex--term-customize-faces ((_backend (eql eat)))
@@ -698,9 +729,7 @@ _BACKEND is the terminal backend type (should be \\='eat)."
   "Create a vterm terminal in BUFFER-NAME running PROGRAM with SWITCHES.
 _BACKEND is the terminal backend type (should be \\='vterm)."
   (codex--ensure-vterm)
-  (let* ((vterm-shell (if switches
-                         (concat program " " (mapconcat #'identity switches " "))
-                       program))
+  (let* ((vterm-shell (codex--shell-command-from-argv program switches))
          (buffer (get-buffer-create buffer-name)))
     (inheritenv
      (with-current-buffer buffer
@@ -714,10 +743,23 @@ _BACKEND is the terminal backend type (should be \\='vterm)."
 _BACKEND is the terminal backend type (should be \\='vterm)."
   (vterm-send-string string))
 
+(cl-defmethod codex--term-send-return ((_backend (eql vterm)))
+  "Send <return> to vterm terminal.
+_BACKEND is the terminal backend type (should be \\='vterm)."
+  (vterm-send-key "\C-m"))
+
+(cl-defmethod codex--term-send-escape ((_backend (eql vterm)))
+  "Send <escape> to vterm terminal.
+_BACKEND is the terminal backend type (should be \\='vterm)."
+  (vterm-send-key "\C-["))
+
 (cl-defmethod codex--term-kill-process ((_backend (eql vterm)) buffer)
   "Kill the vterm terminal process in BUFFER.
 _BACKEND is the terminal backend type (should be \\='vterm)."
-  (kill-process (get-buffer-process buffer)))
+  (when-let ((process (get-buffer-process buffer)))
+    (kill-process process))
+  (when (buffer-live-p buffer)
+    (kill-buffer buffer)))
 
 (cl-defmethod codex--term-read-only-mode ((_backend (eql vterm)))
   "Switch vterm terminal to read-only mode.
@@ -752,8 +794,8 @@ _BACKEND is the terminal backend type (should be \\='vterm)."
   (when-let ((proc (get-buffer-process (current-buffer))))
     (set-process-query-on-exit-flag proc nil)
     (process-put proc 'read-output-max 4096))
-  (advice-add 'vterm--filter :around #'codex--vterm-bell-detector)
-  (advice-add 'vterm--filter :around #'codex--vterm-multiline-buffer-filter)
+  (codex--acquire-managed-advice 'vterm--filter :around #'codex--vterm-bell-detector)
+  (codex--acquire-managed-advice 'vterm--filter :around #'codex--vterm-multiline-buffer-filter)
   (add-hook 'vterm-copy-mode-hook
             (lambda ()
               (unless vterm-copy-mode
@@ -790,6 +832,33 @@ _BACKEND is the terminal backend type (should be \\='vterm)."
 
 ;;;; Private utility functions
 
+(defun codex--shell-command-from-argv (program &optional switches)
+  "Return a shell-safe command string for PROGRAM and SWITCHES."
+  (mapconcat #'shell-quote-argument
+             (cons program switches)
+             " "))
+
+(defun codex--acquire-managed-advice (target where function)
+  "Register FUNCTION as advice on TARGET for the current buffer."
+  (let ((spec (list target where function)))
+    (unless (member spec codex--managed-advice-specs)
+      (push spec codex--managed-advice-specs)
+      (let ((count (gethash spec codex--managed-advice-refcounts 0)))
+        (when (zerop count)
+          (advice-add target where function))
+        (puthash spec (1+ count) codex--managed-advice-refcounts)))))
+
+(defun codex--release-managed-advices ()
+  "Release advice registrations owned by the current buffer."
+  (dolist (spec codex--managed-advice-specs)
+    (pcase-let ((`(,target ,_where ,function) spec))
+      (let ((count (gethash spec codex--managed-advice-refcounts 0)))
+        (if (> count 1)
+            (puthash spec (1- count) codex--managed-advice-refcounts)
+          (remhash spec codex--managed-advice-refcounts)
+          (advice-remove target function)))))
+  (setq codex--managed-advice-specs nil))
+
 (defmacro codex--with-buffer (&rest body)
   "Execute BODY with the Codex buffer, handling buffer selection and display."
   `(if-let ((codex-buffer (codex--get-or-prompt-for-buffer)))
@@ -819,33 +888,66 @@ If not in a project and no buffer file, return `default-directory'."
   "Find all active Codex buffers across all directories."
   (cl-remove-if-not #'codex--buffer-p (buffer-list)))
 
+(defun codex--buffer-directory-for (buffer)
+  "Return the directory associated with Codex BUFFER."
+  (or (buffer-local-value 'codex--buffer-directory buffer)
+      (codex--extract-directory-from-buffer-name (buffer-name buffer))))
+
+(defun codex--buffer-instance-name-for (buffer)
+  "Return the instance name associated with Codex BUFFER."
+  (or (buffer-local-value 'codex--buffer-instance-name buffer)
+      (codex--extract-instance-name-from-buffer-name (buffer-name buffer))))
+
 (defun codex--find-codex-buffers-for-directory (directory)
   "Find all active Codex buffers for a specific DIRECTORY."
-  (cl-remove-if-not
-   (lambda (buf)
-     (let ((buf-dir (codex--extract-directory-from-buffer-name (buffer-name buf))))
-       (and buf-dir
-            (string= (file-truename (abbreviate-file-name directory))
-                     (file-truename buf-dir)))))
-   (codex--find-all-codex-buffers)))
+  (let ((target-dir (file-truename (abbreviate-file-name directory))))
+    (cl-remove-if-not
+     (lambda (buf)
+       (when-let ((buf-dir (codex--buffer-directory-for buf)))
+         (string= target-dir
+                  (file-truename (abbreviate-file-name buf-dir)))))
+     (codex--find-all-codex-buffers))))
+
+(defun codex--buffer-name-instance-separator (payload)
+  "Return the index of the instance separator in Codex buffer PAYLOAD."
+  (let ((search-end (length payload))
+        separator)
+    (while (and (not separator)
+                (setq separator (cl-position ?: payload :from-end t :end search-end)))
+      (let ((suffix (substring payload (1+ separator))))
+        (if (or (string-empty-p suffix)
+                (string-match-p "[/\\\\]" suffix))
+            (setq search-end separator
+                  separator nil))))
+    separator))
+
+(defun codex--parse-buffer-name (buffer-name)
+  "Parse Codex BUFFER-NAME into (DIRECTORY INSTANCE-NAME)."
+  (when (and (stringp buffer-name)
+             (string-prefix-p "*codex:" buffer-name)
+             (string-suffix-p "*" buffer-name))
+    (let* ((payload (substring buffer-name (length "*codex:") -1))
+           (separator (codex--buffer-name-instance-separator payload)))
+      (list (if separator
+                (substring payload 0 separator)
+              payload)
+            (when separator
+              (substring payload (1+ separator)))))))
 
 (defun codex--extract-directory-from-buffer-name (buffer-name)
   "Extract the directory path from a Codex BUFFER-NAME.
 For example, *codex:/path/to/project/:tests* returns /path/to/project/."
-  (when (string-match "^\\*codex:\\([^:]+\\)\\(?::\\([^*]+\\)\\)?\\*$" buffer-name)
-    (match-string 1 buffer-name)))
+  (car (codex--parse-buffer-name buffer-name)))
 
 (defun codex--extract-instance-name-from-buffer-name (buffer-name)
   "Extract the instance name from a Codex BUFFER-NAME.
 For example, *codex:/path/to/project/:tests* returns \"tests\"."
-  (when (string-match "^\\*codex:\\([^:]+\\)\\(?::\\([^*]+\\)\\)?\\*$" buffer-name)
-    (match-string 2 buffer-name)))
+  (cadr (codex--parse-buffer-name buffer-name)))
 
 (defun codex--buffer-display-name (buffer)
   "Create a display name for Codex BUFFER."
-  (let* ((name (buffer-name buffer))
-         (dir (codex--extract-directory-from-buffer-name name))
-         (instance-name (codex--extract-instance-name-from-buffer-name name)))
+  (let* ((dir (codex--buffer-directory-for buffer))
+         (instance-name (codex--buffer-instance-name-for buffer)))
     (if instance-name
         (format "%s:%s (%s)"
                 (file-name-nondirectory (directory-file-name dir))
@@ -860,8 +962,7 @@ For example, *codex:/path/to/project/:tests* returns \"tests\"."
 If SIMPLE-FORMAT is non-nil, use just the instance name."
   (mapcar (lambda (buf)
             (let ((display-name (if simple-format
-                                    (or (codex--extract-instance-name-from-buffer-name
-                                         (buffer-name buf))
+                                    (or (codex--buffer-instance-name-for buf)
                                         "default")
                                   (codex--buffer-display-name buf))))
               (cons display-name buf)))
@@ -926,6 +1027,10 @@ If INSTANCE-NAME is provided, include it in the buffer name."
           (format "*codex:%s*" (abbreviate-file-name (file-truename dir))))
       (error "Cannot determine Codex directory - no `default-directory'!"))))
 
+(defun codex--valid-instance-name-p (instance-name)
+  "Return non-nil if INSTANCE-NAME is safe to encode in a Codex buffer name."
+  (not (string-match-p "[:*/\\\\\n\r]" instance-name)))
+
 (defun codex--prompt-for-instance-name (dir existing-instance-names &optional force-prompt)
   "Prompt user for a new instance name for directory DIR.
 EXISTING-INSTANCE-NAMES is a list of existing instance names.
@@ -933,6 +1038,7 @@ If FORCE-PROMPT is non-nil, always prompt even if no instances exist."
   (if (or existing-instance-names force-prompt)
       (let ((proposed-name ""))
         (while (or (string-empty-p proposed-name)
+                   (not (codex--valid-instance-name-p proposed-name))
                    (member proposed-name existing-instance-names))
           (setq proposed-name
                 (read-string (if (and existing-instance-names (not force-prompt))
@@ -944,6 +1050,9 @@ If FORCE-PROMPT is non-nil, always prompt even if no instances exist."
           (cond
            ((string-empty-p proposed-name)
             (message "Instance name cannot be empty.  Please enter a name.")
+            (sit-for 1))
+           ((not (codex--valid-instance-name-p proposed-name))
+            (message "Instance name '%s' contains reserved characters (:, /, \\, *)." proposed-name)
             (sit-for 1))
            ((member proposed-name existing-instance-names)
             (message "Instance name '%s' already exists.  Please choose a different name." proposed-name)
@@ -959,14 +1068,6 @@ If FORCE-PROMPT is non-nil, always prompt even if no instances exist."
   "Kill a Codex BUFFER by cleaning up hooks and processes."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (when codex-optimize-window-resize
-        (advice-remove (codex--term-get-adjust-process-window-size-fn codex-terminal-backend)
-                       #'codex--adjust-window-size-advice))
-      (when (eq codex-terminal-backend 'vterm)
-        (advice-remove 'vterm--filter #'codex--vterm-bell-detector)
-        (advice-remove 'vterm--filter #'codex--vterm-multiline-buffer-filter))
-      (when codex--window-widths
-        (clrhash codex--window-widths))
       (codex--term-kill-process codex-terminal-backend buffer))))
 
 (defun codex--cleanup-directory-mapping ()
@@ -976,6 +1077,11 @@ If FORCE-PROMPT is non-nil, always prompt even if no instances exist."
                (when (eq buffer dying-buffer)
                  (remhash dir codex--directory-buffer-map)))
              codex--directory-buffer-map)))
+
+(defun codex--cleanup-buffer-state ()
+  "Clean up Codex buffer-local state before the current buffer is killed."
+  (codex--release-managed-advices)
+  (codex--cleanup-directory-mapping))
 
 (defun codex--get-buffer-file-name ()
   "Get the file name associated with the current buffer."
@@ -1002,7 +1108,7 @@ After sending the command, move point to the end of the buffer."
         (with-current-buffer codex-buffer
           (codex--term-send-string codex-terminal-backend cmd)
           (sit-for 0.1)
-          (codex--term-send-string codex-terminal-backend (kbd "RET"))
+          (codex--term-send-return codex-terminal-backend)
           (display-buffer codex-buffer))
         codex-buffer)
     (codex--show-not-running-message)
@@ -1069,12 +1175,12 @@ If FORCE-SWITCH-TO-BUFFER is non-nil, always switch to the Codex buffer."
   (let* ((dir (if (equal arg '(16))
                   (read-directory-name "Project directory: ")
                 (codex--directory)))
+         (backend codex-terminal-backend)
          (switch-after (or (equal arg '(4)) force-switch-to-buffer))
          (default-directory dir)
          (existing-buffers (codex--find-codex-buffers-for-directory dir))
          (existing-instance-names (mapcar (lambda (buf)
-                                            (or (codex--extract-instance-name-from-buffer-name
-                                                 (buffer-name buf))
+                                            (or (codex--buffer-instance-name-for buf)
                                                 "default"))
                                           existing-buffers))
          (instance-name (codex--prompt-for-instance-name dir existing-instance-names force-prompt))
@@ -1088,57 +1194,67 @@ If FORCE-SWITCH-TO-BUFFER is non-nil, always switch to the Codex buffer."
                                              codex-process-environment-functions)))
          (process-environment (append `(,(format "CODEX_BUFFER_NAME=%s" buffer-name))
                                       extra-env-variables
-                                      process-environment))
-         (buffer (codex--term-make codex-terminal-backend buffer-name codex-program program-switches)))
+                                      process-environment)))
 
     (unless (executable-find codex-program)
       (error "Codex program '%s' not found in PATH" codex-program))
 
-    (unless (buffer-live-p buffer)
-      (error "Failed to create Codex buffer"))
+    (let ((buffer (codex--term-make backend buffer-name codex-program program-switches)))
+      (unless (buffer-live-p buffer)
+        (error "Failed to create Codex buffer"))
 
-    (with-current-buffer buffer
-      (codex--term-configure codex-terminal-backend)
-      (setq codex--window-widths (make-hash-table :test 'eq :weakness 'key))
-      (when codex-optimize-window-resize
-        (advice-add (codex--term-get-adjust-process-window-size-fn codex-terminal-backend)
-                    :around #'codex--adjust-window-size-advice))
-      (codex--term-setup-keymap codex-terminal-backend)
-      (codex--term-customize-faces codex-terminal-backend)
-      (face-remap-add-relative 'nobreak-space :underline nil)
-      (buffer-face-set :inherit 'codex-repl-face)
-      (setq-local vertical-scroll-bar nil)
-      (setq-local fringe-mode 0)
-      (add-hook 'kill-buffer-hook #'codex--cleanup-directory-mapping nil t)
-      (run-hooks 'codex-start-hook)
-      (let ((window (funcall codex-display-window-fn buffer)))
-        (when window
-          (set-window-parameter window 'left-margin-width 0)
-          (set-window-parameter window 'right-margin-width 0)
-          (set-window-parameter window 'left-fringe-width 0)
-          (set-window-parameter window 'right-fringe-width 0)
-          (set-window-parameter window 'no-delete-other-windows codex-no-delete-other-windows))))
+      (with-current-buffer buffer
+        (setq-local codex-terminal-backend backend)
+        (setq-local codex--buffer-directory (file-truename dir))
+        (setq-local codex--buffer-instance-name instance-name)
+        (codex--term-configure codex-terminal-backend)
+        (when codex-optimize-window-resize
+          (codex--acquire-managed-advice
+           (codex--term-get-adjust-process-window-size-fn codex-terminal-backend)
+           :around
+           #'codex--adjust-window-size-advice))
+        (codex--term-setup-keymap codex-terminal-backend)
+        (codex--term-customize-faces codex-terminal-backend)
+        (face-remap-add-relative 'nobreak-space :underline nil)
+        (buffer-face-set :inherit 'codex-repl-face)
+        (setq-local vertical-scroll-bar nil)
+        (setq-local fringe-mode 0)
+        (add-hook 'kill-buffer-hook #'codex--cleanup-buffer-state nil t)
+        (run-hooks 'codex-start-hook)
+        ;; After all face configuration (including user hooks), propagate
+        ;; the buffer's font family to eat terminal faces.  Without this,
+        ;; text with eat face properties may resolve to a different font
+        ;; family than faceless text, which can leave redraw artifacts.
+        (codex--propagate-font-to-eat-faces)
+        (let ((window (funcall codex-display-window-fn buffer)))
+          (when window
+            (set-window-parameter window 'left-margin-width 0)
+            (set-window-parameter window 'right-margin-width 0)
+            (set-window-parameter window 'left-fringe-width 0)
+            (set-window-parameter window 'right-fringe-width 0)
+            (set-window-parameter window 'no-delete-other-windows codex-no-delete-other-windows))))
 
-    (when switch-after
-      (pop-to-buffer buffer))))
+      (when switch-after
+        (pop-to-buffer buffer)))))
 
 (defun codex--start-subcommand (subcommand &optional last-flag)
   "Start Codex with SUBCOMMAND (e.g., \"resume\" or \"fork\").
 When LAST-FLAG is non-nil, pass `--last' to the subcommand.
 Codex subcommands run as separate processes."
   (let* ((dir (codex--directory))
+         (backend codex-terminal-backend)
          (default-directory dir)
          (existing-buffers (codex--find-codex-buffers-for-directory dir))
          (existing-instance-names (mapcar (lambda (buf)
-                                            (or (codex--extract-instance-name-from-buffer-name
-                                                 (buffer-name buf))
+                                            (or (codex--buffer-instance-name-for buf)
                                                 "default"))
                                           existing-buffers))
          (instance-name (codex--prompt-for-instance-name dir existing-instance-names t))
          (buffer-name (codex--buffer-name instance-name))
-         ;; Build the command: codex resume [--last] or codex fork [--last]
-         ;; We override the program to include the subcommand as a switch
-         (program-switches (append (list subcommand)
+         (cli-args (codex--build-cli-args))
+         (program-switches (append codex-program-switches
+                                   cli-args
+                                   (list subcommand)
                                    (when last-flag '("--last"))))
          (process-adaptive-read-buffering nil)
          (extra-env-variables (apply #'append
@@ -1147,35 +1263,86 @@ Codex subcommands run as separate processes."
                                              codex-process-environment-functions)))
          (process-environment (append `(,(format "CODEX_BUFFER_NAME=%s" buffer-name))
                                       extra-env-variables
-                                      process-environment))
-         (buffer (codex--term-make codex-terminal-backend buffer-name codex-program program-switches)))
+                                      process-environment)))
 
-    (unless (buffer-live-p buffer)
-      (error "Failed to create Codex buffer"))
+    (unless (executable-find codex-program)
+      (error "Codex program '%s' not found in PATH" codex-program))
 
-    (with-current-buffer buffer
-      (codex--term-configure codex-terminal-backend)
-      (setq codex--window-widths (make-hash-table :test 'eq :weakness 'key))
-      (when codex-optimize-window-resize
-        (advice-add (codex--term-get-adjust-process-window-size-fn codex-terminal-backend)
-                    :around #'codex--adjust-window-size-advice))
-      (codex--term-setup-keymap codex-terminal-backend)
-      (codex--term-customize-faces codex-terminal-backend)
-      (face-remap-add-relative 'nobreak-space :underline nil)
-      (buffer-face-set :inherit 'codex-repl-face)
-      (setq-local vertical-scroll-bar nil)
-      (setq-local fringe-mode 0)
-      (add-hook 'kill-buffer-hook #'codex--cleanup-directory-mapping nil t)
-      (run-hooks 'codex-start-hook)
-      (let ((window (funcall codex-display-window-fn buffer)))
-        (when window
-          (set-window-parameter window 'left-margin-width 0)
-          (set-window-parameter window 'right-margin-width 0)
-          (set-window-parameter window 'left-fringe-width 0)
-          (set-window-parameter window 'right-fringe-width 0)
-          (set-window-parameter window 'no-delete-other-windows codex-no-delete-other-windows))))
+    (let ((buffer (codex--term-make backend buffer-name codex-program program-switches)))
+      (unless (buffer-live-p buffer)
+        (error "Failed to create Codex buffer"))
 
-    (pop-to-buffer buffer)))
+      (with-current-buffer buffer
+        (setq-local codex-terminal-backend backend)
+        (setq-local codex--buffer-directory (file-truename dir))
+        (setq-local codex--buffer-instance-name instance-name)
+        (codex--term-configure codex-terminal-backend)
+        (when codex-optimize-window-resize
+          (codex--acquire-managed-advice
+           (codex--term-get-adjust-process-window-size-fn codex-terminal-backend)
+           :around
+           #'codex--adjust-window-size-advice))
+        (codex--term-setup-keymap codex-terminal-backend)
+        (codex--term-customize-faces codex-terminal-backend)
+        (face-remap-add-relative 'nobreak-space :underline nil)
+        (buffer-face-set :inherit 'codex-repl-face)
+        (setq-local vertical-scroll-bar nil)
+        (setq-local fringe-mode 0)
+        (add-hook 'kill-buffer-hook #'codex--cleanup-buffer-state nil t)
+        (run-hooks 'codex-start-hook)
+        ;; After all face configuration (including user hooks), propagate
+        ;; the buffer's font family to eat terminal faces.  Without this,
+        ;; text with eat face properties may resolve to a different font
+        ;; weight than faceless text, creating visible rectangular blocks.
+        (codex--propagate-font-to-eat-faces)
+        (let ((window (funcall codex-display-window-fn buffer)))
+          (when window
+            (set-window-parameter window 'left-margin-width 0)
+            (set-window-parameter window 'right-margin-width 0)
+            (set-window-parameter window 'left-fringe-width 0)
+            (set-window-parameter window 'right-fringe-width 0)
+            (set-window-parameter window 'no-delete-other-windows codex-no-delete-other-windows))))
+
+      (pop-to-buffer buffer))))
+
+(defun codex--face-family-from-spec (spec)
+  "Return the first explicit font family contributed by face SPEC."
+  (cond
+   ((null spec) nil)
+   ((symbolp spec)
+    (let ((family (face-attribute spec :family nil 'default)))
+      (unless (member family '(nil unspecified "unspecified" "default"))
+        family)))
+   ((and (consp spec) (keywordp (car spec)))
+    (or (let ((family (plist-get spec :family)))
+          (unless (member family '(nil unspecified "unspecified" "default"))
+            family))
+        (codex--face-family-from-spec (plist-get spec :inherit))))
+   ((listp spec)
+    (cl-some #'codex--face-family-from-spec spec))
+   (t nil)))
+
+(defun codex--buffer-font-family ()
+  "Return the effective font family for the current buffer.
+Checks the buffer-local face-remapping-alist for the default face
+first, falling back to the global default face attribute."
+  (or (when-let* ((default-remap (assq 'default face-remapping-alist)))
+        (cl-some #'codex--face-family-from-spec (cdr default-remap)))
+      (codex--face-family-from-spec 'default)))
+
+(defun codex--propagate-font-to-eat-faces ()
+  "Propagate the buffer's font family to eat terminal faces.
+This prevents font-weight mismatches between text with eat face
+properties and faceless text when `buffer-face-mode' overrides
+the default font."
+  (when (eq codex-terminal-backend 'eat)
+    (when-let* ((family (codex--buffer-font-family)))
+      (dolist (i (number-sequence 0 9))
+        (face-remap-add-relative (intern (format "eat-term-font-%d" i))
+                                 :family family))
+      (dolist (face '(eat-term-bold eat-term-faint eat-term-italic
+                      eat-term-slow-blink eat-term-fast-blink))
+        (face-remap-add-relative face :family family)))))
 
 ;;;; Background color remapping
 
@@ -1205,22 +1372,49 @@ COLOR is a hex string like \"#EEEEEE\" or a named color."
           (setq result (nconc result (list k v))))))
     result))
 
+(defun codex--face-inherit-only-p (face)
+  "Return non-nil if FACE is a plist with only :inherit and no visual attributes."
+  (and (consp face)
+       (not (plist-get face :foreground))
+       (not (plist-get face :background))
+       (not (plist-get face :weight))
+       (not (plist-get face :slant))
+       (not (plist-get face :underline))
+       (not (plist-get face :overline))
+       (not (plist-get face :strike-through))
+       (not (plist-get face :box))
+       (not (plist-get face :inverse-video))))
+
 (defun codex--remap-light-backgrounds-in-region (beg end card-bg threshold)
   "Replace light backgrounds between BEG and END with CARD-BG.
 CARD-BG is the replacement color, or nil to strip backgrounds entirely.
-Backgrounds with luminance above THRESHOLD are remapped."
+Backgrounds with luminance above THRESHOLD are remapped.
+Also strips inherit-only faces that carry no visual attributes,
+since these can cause font-weight mismatches."
   (let ((pos beg))
     (while (< pos end)
       (let* ((next (or (next-single-property-change pos 'face nil end) end))
              (face (get-text-property pos 'face))
              (bg (and (consp face) (plist-get face :background))))
-        (when (and bg (> (or (codex--color-luminance bg) 0) threshold))
+        (cond
+         ;; Light background: strip or replace
+         ((and bg (> (or (codex--color-luminance bg) 0) threshold))
           (let ((new-face (if card-bg
                               (plist-put (copy-sequence face) :background card-bg)
                             (codex--strip-plist-key face :background))))
+            (when (and (null card-bg) (codex--face-inherit-only-p new-face))
+              (setq new-face nil))
             (put-text-property pos next 'face new-face)
-            (when (get-text-property pos 'font-lock-face)
-              (put-text-property pos next 'font-lock-face new-face))))
+            (put-text-property pos next 'font-lock-face new-face)))
+         ;; No background but inherit-only face on whitespace: strip to
+         ;; avoid font-weight differences between faced and unfaced text.
+         ((and (null card-bg)
+               (codex--face-inherit-only-p face)
+               (save-excursion
+                 (goto-char pos)
+                 (looking-at-p "[ \t]*$")))
+          (put-text-property pos next 'face nil)
+          (put-text-property pos next 'font-lock-face nil)))
         (setq pos next)))))
 
 (defun codex--remap-light-backgrounds-after-output (buffer)
@@ -1548,7 +1742,7 @@ With prefix ARG, switch to the Codex buffer after sending."
   "Send <escape> to the Codex REPL."
   (interactive)
   (codex--with-buffer
-   (codex--term-send-string codex-terminal-backend (kbd "ESC"))))
+   (codex--term-send-escape codex-terminal-backend)))
 
 ;;;###autoload
 (defun codex-edit-previous-message ()
@@ -1556,7 +1750,8 @@ With prefix ARG, switch to the Codex buffer after sending."
   (interactive)
   (if-let ((codex-buffer (codex--get-or-prompt-for-buffer)))
       (with-current-buffer codex-buffer
-        (codex--term-send-string codex-terminal-backend "")
+        (codex--term-send-escape codex-terminal-backend)
+        (codex--term-send-escape codex-terminal-backend)
         (pop-to-buffer codex-buffer))
     (codex--show-not-running-message)))
 
@@ -1572,7 +1767,7 @@ With prefix ARG, switch to the Codex buffer after sending."
   "Send Enter to inject instructions mid-turn."
   (interactive)
   (codex--with-buffer
-   (codex--term-send-string codex-terminal-backend (kbd "RET"))))
+   (codex--term-send-return codex-terminal-backend)))
 
 ;;;###autoload
 (defun codex-header-search ()
@@ -1673,20 +1868,31 @@ With prefix ARG, show all Codex instances across all directories."
 
 ;;;; Hook handler
 
-(defun codex-handle-hook (hook-type buffer-name &rest args)
-  "Handle hook of HOOK-TYPE for BUFFER-NAME with additional ARGS.
-This is the entry point for all Codex CLI hooks."
-  (let ((json-data (when server-eval-args-left (pop server-eval-args-left)))
-        (extra-args (prog1 server-eval-args-left (setq server-eval-args-left nil))))
+(defun codex-handle-hook (hook-type buffer-name &optional json-data &rest args)
+  "Handle hook of HOOK-TYPE for BUFFER-NAME with JSON-DATA and ARGS."
+  (let ((extra-args (prog1 server-eval-args-left (setq server-eval-args-left nil))))
+    ;; Support both the new emacsclient wrapper, which passes JSON-DATA as a
+    ;; regular argument, and older wrappers that left it in `server-eval-args-left'.
+    (when (and (null json-data) extra-args)
+      (setq json-data (pop extra-args)))
     (let* ((message (list :type hook-type
-                         :buffer-name buffer-name
-                         :json-data json-data
-                         :args (append args extra-args)))
+                          :buffer-name buffer-name
+                          :json-data json-data
+                          :args (append args extra-args)))
            (hook-response (run-hook-with-args-until-success 'codex-event-hook message)))
       ;; For Stop events, trigger notifications
       (when (string= hook-type "Stop")
         (codex--notify nil))
       hook-response)))
+
+(defun codex-handle-hook-from-emacsclient ()
+  "Handle a Codex hook using `server-eval-args-left'."
+  (let* ((hook-args (prog1 server-eval-args-left
+                      (setq server-eval-args-left nil)))
+         (hook-type (pop hook-args))
+         (buffer-name (pop hook-args))
+         (json-data (pop hook-args)))
+    (apply #'codex-handle-hook hook-type buffer-name json-data hook-args)))
 
 ;;;; Hooks auto-configuration
 
@@ -1750,7 +1956,7 @@ Only runs when `codex-enable-hooks' is non-nil."
       (dolist (hook-type hook-types)
         (let* ((hook-key (intern hook-type))
                (existing-entries (alist-get hook-key existing-hooks))
-               (our-command (format "%s %s" wrapper-path hook-type))
+               (our-command (codex--shell-command-from-argv wrapper-path (list hook-type)))
                (found nil))
           ;; Check if our wrapper is already present
           (when existing-entries

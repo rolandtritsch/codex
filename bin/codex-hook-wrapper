@@ -13,20 +13,20 @@ shift  # Remove hook type from arguments to forward the rest
 json_input=$(cat)
 
 # Call emacsclient and get the response
-# Pass the JSON as an additional string argument that will be picked up by server-eval-args-left
-# Forward any additional arguments using "$@"
-response=$(emacsclient --eval "(codex-handle-hook '$hook_type \"$CODEX_BUFFER_NAME\")" "$json_input" "$@" 2>/dev/null)
+# Pass all hook data as plain string arguments to avoid shell and Elisp interpolation bugs.
+response=$(emacsclient --eval '(codex-handle-hook-from-emacsclient)' \
+  "$hook_type" "$CODEX_BUFFER_NAME" "$json_input" "$@" 2>/dev/null)
 
 # Check if the response looks like a JSON string (starts and ends with quotes)
 if [[ "$response" =~ ^\".*\"$ ]]; then
     # Remove the surrounding quotes that emacsclient adds
     # emacsclient returns strings with quotes like "\"json content\""
-    cleaned_response=$(echo "$response" | sed 's/^"//;s/"$//' | sed 's/\\"/"/g')
-    echo "$cleaned_response"
+    cleaned_response=$(printf '%s' "$response" | sed 's/^"//;s/"$//' | sed 's/\\"/"/g')
+    printf '%s\n' "$cleaned_response"
 elif [[ "$response" == "nil" || -z "$response" ]]; then
     # If response is nil or empty, don't output anything
     :
 else
     # For non-JSON responses, output as-is
-    echo "$response"
+    printf '%s\n' "$response"
 fi

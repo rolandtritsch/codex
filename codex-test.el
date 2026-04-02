@@ -7,6 +7,14 @@
 (require 'ert)
 (require 'codex)
 
+(defun codex-test--noop-target (&rest _args)
+  "No-op target used by advice lifecycle tests."
+  nil)
+
+(defun codex-test--pass-through-advice (orig-fun &rest args)
+  "Advice helper that delegates to ORIG-FUN with ARGS."
+  (apply orig-fun args))
+
 ;;;; Buffer name parsing tests
 
 (ert-deftest codex-test-extract-directory-from-buffer-name ()
@@ -17,6 +25,10 @@
                  "/path/to/project/"))
   (should (equal (codex--extract-directory-from-buffer-name "*codex:~/repos/myapp/*")
                  "~/repos/myapp/"))
+  (should (equal (codex--extract-directory-from-buffer-name "*codex:C:/Users/me/project/*")
+                 "C:/Users/me/project/"))
+  (should (equal (codex--extract-directory-from-buffer-name "*codex:C:/Users/me/project/:tests*")
+                 "C:/Users/me/project/"))
   (should (null (codex--extract-directory-from-buffer-name "*not-codex:something*")))
   (should (null (codex--extract-directory-from-buffer-name "regular-buffer"))))
 
@@ -26,6 +38,9 @@
                  "tests"))
   (should (equal (codex--extract-instance-name-from-buffer-name "*codex:/path/:my-instance*")
                  "my-instance"))
+  (should (equal (codex--extract-instance-name-from-buffer-name "*codex:C:/Users/me/project/:tests*")
+                 "tests"))
+  (should (null (codex--extract-instance-name-from-buffer-name "*codex:C:/Users/me/project/*")))
   (should (null (codex--extract-instance-name-from-buffer-name "*codex:/path/to/project/*")))
   (should (null (codex--extract-instance-name-from-buffer-name "not-a-codex-buffer"))))
 
@@ -249,6 +264,28 @@
                 (should (string= first-cmd "/usr/bin/my-custom-hook Stop"))))))
       (delete-directory temp-dir t))))
 
+(ert-deftest codex-test-hooks-json-quotes-wrapper-command ()
+  "Test that generated hook commands shell-quote wrapper paths with spaces."
+  (let* ((temp-dir (make-temp-file "codex-test-hooks" t))
+         (temp-file (expand-file-name "hooks.json" temp-dir))
+         (codex-hooks-json-path temp-file)
+         (codex-enable-hooks t))
+    (unwind-protect
+        (cl-letf (((symbol-function 'codex--hook-wrapper-path)
+                   (lambda () "/mock path/codex hook-wrapper")))
+          (codex--ensure-hooks-json)
+          (let* ((content (with-temp-buffer
+                            (insert-file-contents temp-file)
+                            (json-parse-buffer :object-type 'alist)))
+                 (hooks (alist-get 'hooks content))
+                 (stop-entry (aref (alist-get 'Stop hooks) 0))
+                 (command (alist-get 'command (aref (alist-get 'hooks stop-entry) 0))))
+            (should (equal command
+                           (codex--shell-command-from-argv
+                            "/mock path/codex hook-wrapper"
+                            '("Stop"))))))
+      (delete-directory temp-dir t))))
+
 ;;;; Buffer display name tests
 
 (ert-deftest codex-test-buffer-display-name-with-instance ()
@@ -345,6 +382,14 @@
     (let ((name (codex--buffer-name "my-instance")))
       (should (string-match-p "^\\*codex:" name))
       (should (string-match-p ":my-instance\\*$" name)))))
+
+(ert-deftest codex-test-valid-instance-name-p ()
+  "Test instance name validation."
+  (should (codex--valid-instance-name-p "review buffer"))
+  (should-not (codex--valid-instance-name-p "bad/name"))
+  (should-not (codex--valid-instance-name-p "bad\\name"))
+  (should-not (codex--valid-instance-name-p "bad:name"))
+  (should-not (codex--valid-instance-name-p "bad*name")))
 
 ;;;; Hook wrapper path tests
 
@@ -511,6 +556,35 @@
       (when-let ((other (gethash "/other/path/" codex--directory-buffer-map)))
         (kill-buffer other)))))
 
+(ert-deftest codex-test-managed-advice-refcounts ()
+  "Test that global advices remain installed until the last Codex buffer releases them."
+  (let ((codex--managed-advice-refcounts (make-hash-table :test 'equal))
+        (buf1 (generate-new-buffer " *codex-advice-1*"))
+        (buf2 (generate-new-buffer " *codex-advice-2*")))
+    (unwind-protect
+        (progn
+          (ignore-errors
+            (advice-remove 'codex-test--noop-target #'codex-test--pass-through-advice))
+          (with-current-buffer buf1
+            (codex--acquire-managed-advice 'codex-test--noop-target
+                                           :around
+                                           #'codex-test--pass-through-advice))
+          (with-current-buffer buf2
+            (codex--acquire-managed-advice 'codex-test--noop-target
+                                           :around
+                                           #'codex-test--pass-through-advice))
+          (should (advice-member-p #'codex-test--pass-through-advice 'codex-test--noop-target))
+          (with-current-buffer buf1
+            (codex--release-managed-advices))
+          (should (advice-member-p #'codex-test--pass-through-advice 'codex-test--noop-target))
+          (with-current-buffer buf2
+            (codex--release-managed-advices))
+          (should-not (advice-member-p #'codex-test--pass-through-advice 'codex-test--noop-target)))
+      (ignore-errors
+        (advice-remove 'codex-test--noop-target #'codex-test--pass-through-advice))
+      (kill-buffer buf1)
+      (kill-buffer buf2))))
+
 ;;;; Error formatting tests
 
 (ert-deftest codex-test-format-errors-no-errors ()
@@ -518,6 +592,24 @@
   (with-temp-buffer
     ;; No flycheck, no help-at-pt
     (should (equal (codex--format-errors-at-point) "No errors at point"))))
+
+(ert-deftest codex-test-handle-hook-from-emacsclient ()
+  "Test safe hook dispatch via `server-eval-args-left'."
+  (let (received-message notified)
+    (cl-letf (((symbol-function 'run-hook-with-args-until-success)
+               (lambda (_hook message)
+                 (setq received-message message)
+                 "ok"))
+              ((symbol-function 'codex--notify)
+               (lambda (&rest _) (setq notified t))))
+      (cl-progv '(server-eval-args-left)
+          '(("Stop" "*codex:/tmp/project/*" "{\"event\":1}" "arg1" "arg2"))
+        (should (equal (codex-handle-hook-from-emacsclient) "ok"))
+        (should (equal (plist-get received-message :type) "Stop"))
+        (should (equal (plist-get received-message :buffer-name) "*codex:/tmp/project/*"))
+        (should (equal (plist-get received-message :json-data) "{\"event\":1}"))
+        (should (equal (plist-get received-message :args) '("arg1" "arg2")))
+        (should notified)))))
 
 ;;;; hooks.json matcher values
 
@@ -561,6 +653,116 @@
 
 ;;;; Background color remapping tests
 
+(ert-deftest codex-test-buffer-font-family-from-inherited-face ()
+  "Buffer font family resolution follows inherited buffer faces."
+  (let ((face 'codex-test-buffer-font-family-face))
+    (make-empty-face face)
+    (set-face-attribute face nil :family "Iosevka")
+    (with-temp-buffer
+      (buffer-face-set :inherit face)
+      (should (equal (codex--buffer-font-family) "Iosevka")))))
+
+(ert-deftest codex-test-start-propagates-font-to-eat-faces ()
+  "Normal Codex startup propagates buffer font settings to eat faces."
+  (let ((codex-terminal-backend 'eat)
+        (codex-optimize-window-resize nil)
+        (codex-display-window-fn (lambda (_buffer) nil))
+        (codex-program "codex")
+        buffer
+        propagated)
+    (unwind-protect
+        (cl-letf (((symbol-function 'executable-find)
+                   (lambda (_program) t))
+                  ((symbol-function 'codex--directory)
+                   (lambda () "/tmp/"))
+                  ((symbol-function 'codex--find-codex-buffers-for-directory)
+                   (lambda (_dir) nil))
+                  ((symbol-function 'codex--prompt-for-instance-name)
+                   (lambda (&rest _) nil))
+                  ((symbol-function 'codex--build-cli-args)
+                   (lambda () nil))
+                  ((symbol-function 'codex--term-make)
+                   (lambda (&rest _args)
+                     (setq buffer (generate-new-buffer "*codex-test-start*"))))
+                  ((symbol-function 'codex--term-configure)
+                   (lambda (&rest _args) nil))
+                  ((symbol-function 'codex--term-setup-keymap)
+                   (lambda (&rest _args) nil))
+                  ((symbol-function 'codex--term-customize-faces)
+                   (lambda (&rest _args) nil))
+                  ((symbol-function 'codex--propagate-font-to-eat-faces)
+                   (lambda ()
+                     (setq propagated t))))
+          (codex--start nil nil)
+          (should propagated))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
+
+(ert-deftest codex-test-start-subcommand-includes-cli-options ()
+  "Subcommands inherit configured CLI options and extra program switches."
+  (let ((codex-terminal-backend 'eat)
+        (codex-optimize-window-resize nil)
+        (codex-display-window-fn (lambda (_buffer) nil))
+        (codex-program "codex")
+        (codex-program-switches '("--search"))
+        (codex-use-alt-screen nil)
+        (codex-model "gpt-5.4")
+        (codex-profile "work")
+        (codex-reasoning-effort "high")
+        buffer
+        captured-switches)
+    (unwind-protect
+        (cl-letf (((symbol-function 'executable-find)
+                   (lambda (_program) t))
+                  ((symbol-function 'codex--directory)
+                   (lambda () "/tmp/"))
+                  ((symbol-function 'codex--find-codex-buffers-for-directory)
+                   (lambda (_dir) nil))
+                  ((symbol-function 'codex--prompt-for-instance-name)
+                   (lambda (&rest _) "resume-copy"))
+                  ((symbol-function 'codex--term-make)
+                   (lambda (_backend _buffer-name _program switches)
+                     (setq captured-switches switches)
+                     (setq buffer (generate-new-buffer "*codex-test-subcommand*"))))
+                  ((symbol-function 'codex--term-configure)
+                   (lambda (&rest _args) nil))
+                  ((symbol-function 'codex--term-setup-keymap)
+                   (lambda (&rest _args) nil))
+                  ((symbol-function 'codex--term-customize-faces)
+                   (lambda (&rest _args) nil))
+                  ((symbol-function 'codex--propagate-font-to-eat-faces)
+                   (lambda () nil))
+                  ((symbol-function 'pop-to-buffer)
+                   (lambda (&rest _) nil)))
+          (codex--start-subcommand "resume" t)
+          (should (equal captured-switches
+                         '("--search"
+                           "--no-alt-screen"
+                           "--model" "gpt-5.4"
+                           "--profile" "work"
+                           "--reasoning-effort" "high"
+                           "resume"
+                           "--last"))))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
+
+(ert-deftest codex-test-edit-previous-message-sends-double-escape ()
+  "Editing the previous message sends two escape key presses."
+  (let ((buf (generate-new-buffer "*codex:/tmp/project/*"))
+        (escape-count 0))
+    (unwind-protect
+        (cl-letf (((symbol-function 'codex--get-or-prompt-for-buffer)
+                   (lambda () buf))
+                  ((symbol-function 'codex--term-send-escape)
+                   (lambda (_backend) (setq escape-count (1+ escape-count))))
+                  ((symbol-function 'pop-to-buffer)
+                   (lambda (&rest _) nil)))
+          (with-current-buffer buf
+            (let ((codex-terminal-backend 'eat))
+              (codex-edit-previous-message)))
+          (should (= escape-count 2)))
+      (kill-buffer buf))))
+
 (ert-deftest codex-test-color-luminance-white ()
   "White has luminance close to 1.0."
   (should (> (codex--color-luminance "#ffffff") 0.99)))
@@ -584,14 +786,23 @@
     (should-not (equal card "#000000"))))
 
 (ert-deftest codex-test-remap-strips-light-backgrounds ()
-  "Light backgrounds are stripped when card-bg is nil."
+  "Light backgrounds are stripped when card-bg is nil.
+When only :inherit remains, the face is removed entirely."
   (with-temp-buffer
     (insert "hello")
     (put-text-property 1 6 'face '(:background "#EEEEEE" :inherit (eat-term-font-0)))
     (codex--remap-light-backgrounds-in-region 1 6 nil 0.5)
+    (should-not (get-text-property 1 'face))))
+
+(ert-deftest codex-test-remap-strips-keeps-foreground ()
+  "When foreground is present, face is kept after stripping background."
+  (with-temp-buffer
+    (insert "hello")
+    (put-text-property 1 6 'face '(:background "#EEEEEE" :foreground "#00ff00" :inherit (eat-term-font-0)))
+    (codex--remap-light-backgrounds-in-region 1 6 nil 0.5)
     (let ((face (get-text-property 1 'face)))
       (should-not (plist-get face :background))
-      (should (equal (plist-get face :inherit) '(eat-term-font-0))))))
+      (should (equal (plist-get face :foreground) "#00ff00")))))
 
 (ert-deftest codex-test-remap-replaces-light-with-card-bg ()
   "Light backgrounds are replaced when card-bg is a color."
