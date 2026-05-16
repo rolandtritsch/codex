@@ -1,8 +1,8 @@
 # `codex`: Emacs integration for OpenAI Codex CLI
 
-`codex.el` provides an Emacs interface to the [OpenAI Codex CLI](https://github.com/openai/codex), embedding the Codex agent TUI inside an Emacs terminal emulator buffer. You can interact with Codex without leaving your editor — start sessions, send commands, review output, and manage multiple instances across projects.
+`codex.el` provides an Emacs interface to the [OpenAI Codex CLI][codex-cli], embedding the Codex agent TUI inside an Emacs terminal emulator buffer. You can interact with Codex without leaving your editor — start sessions, send commands, review output, and manage multiple instances across projects.
 
-The package uses [eat](https://codeberg.org/akib/emacs-eat) by default and can use [vterm](https://github.com/akermu/emacs-libvterm) if you install it separately. It is modeled after `claude-code.el`, sharing a similar architecture and workflow.
+The package uses [eat][eat] by default and can use [vterm][vterm] if you install it separately. It is modeled after `claude-code.el`, sharing a similar architecture and workflow.
 
 Key capabilities include:
 
@@ -42,11 +42,11 @@ Requires Emacs 28.1 or later.
 
 ### Dependencies
 
-- [transient](https://github.com/magit/transient) (>= 0.9.3)
-- [inheritenv](https://github.com/purcell/inheritenv) (>= 0.2)
-- [eat](https://codeberg.org/akib/emacs-eat) (>= 0.9.4)
-- Optional: [vterm](https://github.com/akermu/emacs-libvterm), when `codex-terminal-backend` is set to `vterm`
-- The [Codex CLI](https://github.com/openai/codex) must be installed and available in your `PATH`.
+- [transient][transient] (>= 0.9.3)
+- [inheritenv][inheritenv] (>= 0.2)
+- [eat][eat] (>= 0.9.4)
+- Optional: [vterm][vterm], when `codex-terminal-backend` is set to `vterm`
+- The [Codex CLI][codex-cli] must be installed and available in your `PATH`.
 
 ## Quick start
 
@@ -76,8 +76,16 @@ preserved.
 
 ## Documentation
 
-For a comprehensive description of all user options, commands, and functions, see the [manual](https://stafforini.com/notes/codex/).
+For a comprehensive description of all user options, commands, and functions, see the [manual][manual].
 
 ## Contributing
 
-Development setup, testing, and pull request workflow are covered in [CONTRIBUTING.md](CONTRIBUTING.md).
+Development setup, testing, and pull request workflow are covered in [CONTRIBUTING.md][contributing].
+
+[codex-cli]: https://github.com/openai/codex
+[contributing]: CONTRIBUTING.md
+[eat]: https://codeberg.org/akib/emacs-eat
+[inheritenv]: https://github.com/purcell/inheritenv
+[manual]: https://stafforini.com/notes/codex/
+[transient]: https://github.com/magit/transient
+[vterm]: https://github.com/akermu/emacs-libvterm

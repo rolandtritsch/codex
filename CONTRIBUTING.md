@@ -1,9 +1,9 @@
 # Contributing
 
 This project is an Emacs package for the Codex CLI. If you are looking for
-installation, configuration, or day-to-day usage, start with [README.md](README.md).
+installation, configuration, or day-to-day usage, start with [README.md][readme].
 For repository layout, naming conventions, and maintainer-oriented notes, see
-[AGENTS.md](AGENTS.md).
+[AGENTS.md][agents].
 
 ## Development Setup
 
@@ -74,3 +74,6 @@ still check the rendered Markdown and any links you touched.
 In the PR description, include the behavior change, tests run, documentation
 updates, and any manual terminal UI verification that applies. If tests are not
 applicable, state why.
+
+[agents]: AGENTS.md
+[readme]: README.md
