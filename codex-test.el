@@ -269,7 +269,7 @@
                            (insert-file-contents temp-file)
                            (buffer-string))))
             (should (string-match-p "\\[features\\]" content))
-            (should (string-match-p "codex_hooks = true" content))))
+            (should (string-match-p "hooks = true" content))))
       (delete-file temp-file))))
 
 (ert-deftest codex-test-config-toml-hooks-existing-features ()
@@ -284,20 +284,20 @@
           (let ((content (with-temp-buffer
                            (insert-file-contents temp-file)
                            (buffer-string))))
-            (should (string-match-p "codex_hooks = true" content))
+            (should (string-match-p "hooks = true" content))
             ;; Should not duplicate [features] section
             (should (= 1 (cl-count-if (lambda (_) t)
                                        (split-string content "\\[features\\]" t))))))
       (delete-file temp-file))))
 
 (ert-deftest codex-test-config-toml-hooks-already-present ()
-  "Test that existing codex_hooks = true is not duplicated."
+  "Test that existing hooks = true is not duplicated."
   (let* ((temp-file (make-temp-file "codex-test-config" nil ".toml"))
          (codex-hooks-config-path temp-file))
     (unwind-protect
         (progn
           (with-temp-file temp-file
-            (insert "[features]\ncodex_hooks = true\n"))
+            (insert "[features]\nhooks = true\n"))
           (codex--ensure-config-toml-hooks)
           (let ((content (with-temp-buffer
                            (insert-file-contents temp-file)
@@ -305,7 +305,7 @@
             ;; Should appear exactly once
             (let ((count 0)
                   (start 0))
-              (while (string-match "codex_hooks = true" content start)
+              (while (string-match "hooks = true" content start)
                 (setq count (1+ count)
                       start (match-end 0)))
               (should (= 1 count)))))
@@ -314,25 +314,37 @@
 (ert-deftest codex-test-config-toml-hooks-replaces-false ()
   "Test that an existing false hooks setting is replaced in [features]."
   (should (equal (codex--config-toml-with-hooks-enabled
-                  "[features]\ncodex_hooks = false\n")
-                 "[features]\ncodex_hooks = true\n")))
+                  "[features]\nhooks = false\n")
+                 "[features]\nhooks = true\n")))
+
+(ert-deftest codex-test-config-toml-hooks-replaces-legacy-key ()
+  "Test that the legacy codex_hooks setting is replaced in [features]."
+  (should (equal (codex--config-toml-with-hooks-enabled
+                  "[features]\ncodex_hooks = true\n")
+                 "[features]\nhooks = true\n")))
+
+(ert-deftest codex-test-config-toml-hooks-removes-legacy-duplicate ()
+  "Test that a legacy codex_hooks entry does not duplicate the hooks key."
+  (should (equal (codex--config-toml-with-hooks-enabled
+                  "[features]\ncodex_hooks = true\nhooks = false\n")
+                 "[features]\nhooks = true\n")))
 
 (ert-deftest codex-test-config-toml-hooks-ignores-comments ()
   "Test that commented hook settings do not count as enabled."
   (should (equal (codex--config-toml-with-hooks-enabled
-                  "[features]\n# codex_hooks = true\n")
-                 "[features]\ncodex_hooks = true\n# codex_hooks = true\n")))
+                  "[features]\n# hooks = true\n")
+                 "[features]\nhooks = true\n# hooks = true\n")))
 
 (ert-deftest codex-test-config-toml-hooks-scopes-to-features ()
   "Test that hook settings in other tables do not satisfy [features]."
   (should (equal (codex--config-toml-with-hooks-enabled
-                  "[other]\ncodex_hooks = true\n")
-                 "[other]\ncodex_hooks = true\n\n[features]\ncodex_hooks = true\n")))
+                  "[other]\nhooks = true\n")
+                 "[other]\nhooks = true\n\n[features]\nhooks = true\n")))
 
 (ert-deftest codex-test-config-toml-hooks-header-at-eof ()
   "Test enabling hooks when [features] has no trailing newline."
   (should (equal (codex--config-toml-with-hooks-enabled "[features]")
-                 "[features]\ncodex_hooks = true\n")))
+                 "[features]\nhooks = true\n")))
 
 ;;;; hooks.json merging tests
 
@@ -650,7 +662,7 @@
                            (insert-file-contents config-path)
                            (buffer-string))))
             (should (string-match-p "\\[features\\]" content))
-            (should (string-match-p "codex_hooks = true" content))))
+            (should (string-match-p "hooks = true" content))))
       (delete-directory temp-dir t))))
 
 (ert-deftest codex-test-config-toml-hooks-preserves-other-content ()
@@ -667,7 +679,7 @@
                            (buffer-string))))
             (should (string-match-p "default = \"gpt-4\"" content))
             (should (string-match-p "other_feature = true" content))
-            (should (string-match-p "codex_hooks = true" content))))
+            (should (string-match-p "hooks = true" content))))
       (delete-file temp-file))))
 
 ;;;; CLI args edge cases

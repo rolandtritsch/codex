@@ -3257,7 +3257,7 @@ Only runs when `codex-enable-hooks' is non-nil."
           (funcall write-fn path updated))))))
 
 (defun codex--ensure-config-toml-hooks ()
-  "Ensure `features.codex_hooks = true' exists in config.toml."
+  "Ensure `features.hooks = true' exists in config.toml."
   (codex--ensure-managed-file codex-hooks-config-path
                               #'codex--read-file-string
                               #'codex--config-toml-with-hooks-enabled
@@ -3272,7 +3272,7 @@ Only runs when `codex-enable-hooks' is non-nil."
     ""))
 
 (defun codex--config-toml-with-hooks-enabled (content)
-  "Return CONTENT with `[features].codex_hooks' set to true."
+  "Return CONTENT with `[features].hooks' set to true."
   (with-temp-buffer
     (insert content)
     (if (codex--goto-features-table)
@@ -3296,9 +3296,14 @@ Only runs when `codex-enable-hooks' is non-nil."
     (unless (bolp)
       (insert "\n")
       (setq table-end (1+ table-end)))
-    (if (re-search-forward "^[ \t]*codex_hooks[ \t]*=[^\n]*" table-end t)
-        (replace-match "codex_hooks = true" t t)
-      (insert "codex_hooks = true\n"))))
+    (save-restriction
+      (narrow-to-region (point) table-end)
+      (while (re-search-forward "^[ \t]*codex_hooks[ \t]*=[^\n]*\n?" nil t)
+        (replace-match "" t t))
+      (goto-char (point-min))
+      (if (re-search-forward "^[ \t]*hooks[ \t]*=[^\n]*" nil t)
+          (replace-match "hooks = true" t t)
+        (insert "hooks = true\n")))))
 
 (defun codex--append-features-table ()
   "Append a `[features]' table with Codex hooks enabled."
@@ -3307,7 +3312,7 @@ Only runs when `codex-enable-hooks' is non-nil."
     (unless (bolp)
       (insert "\n"))
     (insert "\n"))
-  (insert "[features]\ncodex_hooks = true\n"))
+  (insert "[features]\nhooks = true\n"))
 
 (defun codex--write-file-atomically (file content)
   "Write CONTENT to FILE by renaming a temporary file in the same directory."
