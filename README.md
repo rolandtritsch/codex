@@ -77,3 +77,7 @@ preserved.
 ## Documentation
 
 For a comprehensive description of all user options, commands, and functions, see the [manual](https://stafforini.com/notes/codex/).
+
+## Contributing
+
+Development setup, testing, and pull request workflow are covered in [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -1,5 +1,9 @@
 # Repository Guidelines
 
+This file captures repository conventions for coding agents and maintainers.
+For contributor setup, local testing workflow, and pull request submission, see
+`CONTRIBUTING.md`. For user-facing installation and usage, see `README.md`.
+
 ## Project Structure & Module Organization
 
 - `codex.el`: main package source, including custom variables, terminal backends, interactive commands, hooks, and minor mode setup.
@@ -8,7 +12,7 @@
 - `README.md`, `README.org`, `codex.texi`: user documentation and manual formats.
 - `.github/workflows/`: CI configuration for byte compilation and tests.
 
-## Build, Test, and Development Commands
+## Build & Test Commands
 
 - `make test`: run the ERT test suite in batch Emacs.
 - `make compile`: byte-compile `codex.el` with warnings treated as errors.
@@ -30,26 +34,13 @@ For shell scripts, keep POSIX `sh` compatibility unless there is a documented re
 ## Testing Guidelines
 
 Tests use Emacs ERT and live in `codex-test.el`. Add focused regression tests near related tests. Names should describe behavior, for example `codex-test-build-cli-args-defaults`.
+See `CONTRIBUTING.md` for the contributor test workflow and manual verification guidance.
 
-Before submitting changes, run:
-
-```sh
-make compile
-make test
-```
-
-For terminal or hook changes, cover edge cases such as missing buffers, stale hook entries, or backend-specific paths.
-
-## Commit & Pull Request Guidelines
+## Commit & Pull Request Notes
 
 Recent commits use short imperative subjects, often with an optional `codex:` scope, for example `Preserve Codex Eat session scrollback` or `codex: retry transient hook dispatch failures`.
 
-Pull requests should include:
-
-- A concise description of the behavior change.
-- Tests added or updated, or a clear reason tests are not applicable.
-- Any user-facing configuration or documentation changes.
-- Manual verification notes for terminal UI behavior when relevant.
+Use `CONTRIBUTING.md` for the full PR checklist.
 
 ## Security & Configuration Tips
 
