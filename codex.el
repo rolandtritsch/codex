@@ -3419,12 +3419,26 @@ Only runs when `codex-enable-hooks' is non-nil."
   (or (seq-some (lambda (command)
                   (codex--hook-entry-command-p entry command))
                 (codex--owned-hook-commands wrapper-path hook-type))
+      (codex--codex-hook-wrapper-entry-p entry hook-type)
       (codex--legacy-notify-hook-entry-p entry hook-type)))
 
 (defun codex--owned-hook-commands (wrapper-path hook-type)
   "Return current and legacy owned commands for WRAPPER-PATH and HOOK-TYPE."
   (list (codex--hook-command wrapper-path hook-type)
         (codex--shell-command-from-argv wrapper-path (list hook-type))))
+
+(defun codex--codex-hook-wrapper-entry-p (entry hook-type)
+  "Return non-nil if ENTRY invokes codex-hook-wrapper for HOOK-TYPE."
+  (when-let* ((hooks (alist-get 'hooks entry)))
+    (seq-some
+     (lambda (hook)
+       (when-let* ((command (alist-get 'command hook))
+                   (argv (ignore-errors
+                           (split-string-and-unquote command))))
+         (and (string= (file-name-nondirectory (car argv))
+                       "codex-hook-wrapper")
+              (string= (cadr argv) hook-type))))
+     hooks)))
 
 (defun codex--legacy-notify-hook-entry-p (entry hook-type)
   "Return non-nil if ENTRY is the old notify wrapper for HOOK-TYPE."

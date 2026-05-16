@@ -630,6 +630,32 @@
         (should (equal (aref stop-hooks 0)
                        (codex--hook-entry "Stop" command)))))))
 
+(ert-deftest codex-test-hooks-json-replaces-old-wrapper-path-entry ()
+  "Test that generated hook entries from old wrapper paths are replaced."
+  (codex-test--with-temp-hooks-json temp-file
+    (let* ((codex-emacsclient-program "/mock/emacsclient")
+           (server-name "mock-server")
+           (server-use-tcp nil)
+           (wrapper "/mock/path/codex-hook-wrapper")
+           (old-wrapper "/old/path/codex-hook-wrapper")
+           (old-command (codex--shell-command-from-argv
+                         old-wrapper
+                         '("Stop" "--emacsclient" "/usr/bin/emacsclient"
+                           "--socket-name" "server")))
+           (command (codex--hook-command wrapper "Stop")))
+      (with-temp-file temp-file
+        (insert (json-encode
+                 `((hooks . ((Stop . [((matcher . "*")
+                                        (hooks . [((type . "command")
+                                                   (command . ,old-command)
+                                                   (timeout . 30))]))])))))))
+      (let* ((content (codex-test--ensure-hooks-json wrapper))
+             (hooks (alist-get 'hooks content))
+             (stop-hooks (alist-get 'Stop hooks)))
+        (should (= 1 (length stop-hooks)))
+        (should (equal (aref stop-hooks 0)
+                       (codex--hook-entry "Stop" command)))))))
+
 (ert-deftest codex-test-hooks-json-replaces-legacy-notify-hook ()
   "Test that old notify-emacs hook entries are replaced."
   (codex-test--with-temp-hooks-json temp-file
