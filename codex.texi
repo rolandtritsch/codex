@@ -185,7 +185,7 @@ The user option @code{codex-sandbox-mode} controls the sandboxing level for Code
 
 The user option @code{codex-approval-policy} sets the approval policy for tool use.  When @code{nil} (the default), the CLI default applies.  The choices are @code{untrusted}, @code{on-request}, and @code{never}, corresponding to the @code{--ask-for-approval} flag.  This option is also ignored when @code{codex-full-auto} is non-nil.
 
-The user option @code{codex-full-auto} enables fully autonomous mode by passing @code{--dangerously-bypass-approvals-and-sandbox} to Codex.  The default is @code{nil}.  When non-nil, this overrides both @code{codex-sandbox-mode} and @code{codex-approval-policy}.  Use with caution.
+The user option @code{codex-full-auto} enables fully autonomous mode by passing Codex's current @code{--dangerously-bypass-approvals-and-sandbox} flag.  The default is @code{nil}.  When non-nil, this overrides both @code{codex-sandbox-mode} and @code{codex-approval-policy}.  The option name is retained for compatibility with older @samp{codex.el} configurations; use with caution.
 
 @node Model and profile
 @section Model and profile
@@ -208,11 +208,11 @@ The user option @code{codex-reasoning-effort} overrides the reasoning effort lev
 @vindex codex-hooks-json-path
 @vindex codex-emacsclient-program
 
-The user option @code{codex-enable-hooks} controls whether @samp{codex.el} automatically configures the Codex CLI hooks system.  The default is @code{t}.  When enabled, activating @code{codex-mode} ensures that @code{config.toml} has @code{hooks = true} under @code{[features]} and that @code{hooks.json} contains entries for all supported hook types.
+The user option @code{codex-enable-hooks} controls whether @samp{codex.el} automatically configures the Codex CLI hooks system.  The default is @code{t}.  When enabled, activating @code{codex-mode} ensures that @code{config.toml} has @code{hooks = true} under @code{[features]} and that @code{hooks.json} contains entries for the hook types that @samp{codex.el} handles.
 
-The user option @code{codex-hooks-config-path} is the path to the Codex @code{config.toml} file.  The default is @code{"~/.codex/config.toml"}.
+The user option @code{codex-hooks-config-path} is the path to the Codex @code{config.toml} file.  The default is @code{"config.toml"} under @code{CODEX_HOME}, or under @code{"~/.codex"} when @code{CODEX_HOME} is unset.
 
-The user option @code{codex-hooks-json-path} is the path to the Codex @code{hooks.json} file.  The default is @code{"~/.codex/hooks.json"}.
+The user option @code{codex-hooks-json-path} is the path to the Codex @code{hooks.json} file.  The default is @code{"hooks.json"} under @code{CODEX_HOME}, or under @code{"~/.codex"} when @code{CODEX_HOME} is unset.
 
 The user option @code{codex-emacsclient-program} specifies the @samp{emacsclient} executable used by the hook wrapper.  The default is @code{nil}, meaning @samp{codex.el} records the first @samp{emacsclient} found in @code{PATH} when hooks are configured.
 
@@ -617,10 +617,12 @@ When @code{codex-enable-hooks} is non-nil and @code{codex-mode} is activated, @s
 @item
 Ensures that @code{config.toml} has @code{hooks = true} under the @code{[features]} section.
 @item
-Ensures that @code{hooks.json} has entries for all six supported hook types: @code{Stop}, @code{SessionStart}, @code{PreToolUse}, @code{PermissionRequest}, @code{PostToolUse}, and @code{UserPromptSubmit}.
+Ensures that @code{hooks.json} has entries for the hook types handled by @samp{codex.el}: @code{Stop}, @code{SessionStart}, @code{PreToolUse}, @code{PermissionRequest}, @code{PostToolUse}, @code{PreCompact}, @code{PostCompact}, and @code{UserPromptSubmit}.
 @end enumerate
 
 Each hook entry points to the @samp{codex-hook-wrapper} script, which reads JSON from stdin into a private temporary file and asks @samp{emacsclient} to pass that file to @code{codex-handle-hook}.  Existing user-defined hooks in @code{hooks.json} are preserved; @samp{codex.el} appends its own entries if they are absent and repairs them if their matcher, command, type, or timeout drifts.
+
+Current Codex releases may require reviewing and trusting command hooks from the @samp{/hooks} slash command before they run. @samp{codex.el} installs and repairs the hook definitions, but it does not bypass Codex's hook trust review or manage inline @code{[hooks]} tables, plugin hooks, or hook state in @code{config.toml}.
 
 You can respond to these events by adding functions to @code{codex-event-hook} (@ref{Emacs hooks}).
 

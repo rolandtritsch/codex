@@ -525,6 +525,14 @@
 
 ;;;; Hook wrapper path tests
 
+(ert-deftest codex-test-default-codex-home-uses-env ()
+  "Test that default Codex paths honor CODEX_HOME."
+  (let ((process-environment (cons "CODEX_HOME=/tmp/codex-home"
+                                   process-environment)))
+    (should (equal (codex--default-codex-home) "/tmp/codex-home"))
+    (should (equal (codex--default-codex-path "hooks.json")
+                   "/tmp/codex-home/hooks.json"))))
+
 (ert-deftest codex-test-hook-wrapper-path ()
   "Test that hook wrapper path resolves to bin/codex-hook-wrapper."
   (let ((load-file-name (expand-file-name "codex.el" "/fake/path/")))
@@ -1046,9 +1054,13 @@
            (hooks (alist-get 'hooks content))
            (ups-entry (aref (alist-get 'UserPromptSubmit hooks) 0))
            (permission-entry (aref (alist-get 'PermissionRequest hooks) 0))
+           (pre-compact-entry (aref (alist-get 'PreCompact hooks) 0))
+           (post-compact-entry (aref (alist-get 'PostCompact hooks) 0))
            (stop-entry (aref (alist-get 'Stop hooks) 0)))
       (should (equal (alist-get 'matcher ups-entry) ""))
       (should (equal (alist-get 'matcher permission-entry) "*"))
+      (should (equal (alist-get 'matcher pre-compact-entry) "*"))
+      (should (equal (alist-get 'matcher post-compact-entry) "*"))
       (should (equal (alist-get 'matcher stop-entry) "*")))))
 
 ;;;; Find codex buffers tests

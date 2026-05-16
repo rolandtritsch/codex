@@ -101,7 +101,7 @@ The user option ~codex-sandbox-mode~ controls the sandboxing level for Codex.  W
 
 The user option ~codex-approval-policy~ sets the approval policy for tool use.  When ~nil~ (the default), the CLI default applies.  The choices are ~untrusted~, ~on-request~, and ~never~, corresponding to the ~--ask-for-approval~ flag.  This option is also ignored when ~codex-full-auto~ is non-nil.
 
-The user option ~codex-full-auto~ enables fully autonomous mode by passing ~--dangerously-bypass-approvals-and-sandbox~ to Codex.  The default is ~nil~.  When non-nil, this overrides both ~codex-sandbox-mode~ and ~codex-approval-policy~.  Use with caution.
+The user option ~codex-full-auto~ enables fully autonomous mode by passing Codex's current ~--dangerously-bypass-approvals-and-sandbox~ flag.  The default is ~nil~.  When non-nil, this overrides both ~codex-sandbox-mode~ and ~codex-approval-policy~.  The option name is retained for compatibility with older =codex.el= configurations; use with caution.
 
 ** Model and profile
 :PROPERTIES:
@@ -128,11 +128,11 @@ The user option ~codex-reasoning-effort~ overrides the reasoning effort level.  
 #+vindex: codex-hooks-json-path
 #+vindex: codex-emacsclient-program
 
-The user option ~codex-enable-hooks~ controls whether =codex.el= automatically configures the Codex CLI hooks system.  The default is ~t~.  When enabled, activating ~codex-mode~ ensures that ~config.toml~ has ~hooks = true~ under ~[features]~ and that ~hooks.json~ contains entries for all supported hook types.
+The user option ~codex-enable-hooks~ controls whether =codex.el= automatically configures the Codex CLI hooks system.  The default is ~t~.  When enabled, activating ~codex-mode~ ensures that ~config.toml~ has ~hooks = true~ under ~[features]~ and that ~hooks.json~ contains entries for the hook types that =codex.el= handles.
 
-The user option ~codex-hooks-config-path~ is the path to the Codex ~config.toml~ file.  The default is ~"~/.codex/config.toml"~.
+The user option ~codex-hooks-config-path~ is the path to the Codex ~config.toml~ file.  The default is ~"config.toml"~ under ~CODEX_HOME~, or under ~"~/.codex"~ when ~CODEX_HOME~ is unset.
 
-The user option ~codex-hooks-json-path~ is the path to the Codex ~hooks.json~ file.  The default is ~"~/.codex/hooks.json"~.
+The user option ~codex-hooks-json-path~ is the path to the Codex ~hooks.json~ file.  The default is ~"hooks.json"~ under ~CODEX_HOME~, or under ~"~/.codex"~ when ~CODEX_HOME~ is unset.
 
 The user option ~codex-emacsclient-program~ specifies the =emacsclient= executable used by the hook wrapper.  The default is ~nil~, meaning =codex.el= records the first =emacsclient= found in ~PATH~ when hooks are configured.
 
@@ -527,9 +527,11 @@ The Codex CLI supports a hooks mechanism that notifies external programs of life
 When ~codex-enable-hooks~ is non-nil and ~codex-mode~ is activated, =codex.el= automatically:
 
 1. Ensures that ~config.toml~ has ~hooks = true~ under the ~[features]~ section.
-2. Ensures that ~hooks.json~ has entries for all six supported hook types: ~Stop~, ~SessionStart~, ~PreToolUse~, ~PermissionRequest~, ~PostToolUse~, and ~UserPromptSubmit~.
+2. Ensures that ~hooks.json~ has entries for the hook types handled by =codex.el=: ~Stop~, ~SessionStart~, ~PreToolUse~, ~PermissionRequest~, ~PostToolUse~, ~PreCompact~, ~PostCompact~, and ~UserPromptSubmit~.
 
 Each hook entry points to the =codex-hook-wrapper= script, which reads JSON from stdin into a private temporary file and asks =emacsclient= to pass that file to ~codex-handle-hook~.  Existing user-defined hooks in ~hooks.json~ are preserved; =codex.el= appends its own entries if they are absent and repairs them if their matcher, command, type, or timeout drifts.
+
+Current Codex releases may require reviewing and trusting command hooks from the ~/hooks~ slash command before they run. =codex.el= installs and repairs the hook definitions, but it does not bypass Codex's hook trust review or manage inline ~[hooks]~ tables, plugin hooks, or hook state in ~config.toml~.
 
 You can respond to these events by adding functions to ~codex-event-hook~ ([[#h:emacs-hooks][Emacs hooks]]).
 

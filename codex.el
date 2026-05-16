@@ -58,6 +58,14 @@
                'face-defface-spec)
 
 ;;;; Core customization options
+(defun codex--default-codex-home ()
+  "Return the default Codex home directory."
+  (expand-file-name (or (getenv "CODEX_HOME") "~/.codex")))
+
+(defun codex--default-codex-path (file)
+  "Return FILE under the default Codex home directory."
+  (expand-file-name file (file-name-as-directory (codex--default-codex-home))))
+
 (defcustom codex-program "codex"
   "Path to the Codex binary."
   :type 'string
@@ -188,7 +196,8 @@ style, so codex.el recognizes known suggestions and applies
   :type '(repeat string)
   :group 'codex)
 
-(defcustom codex-prompt-autosuggestion-history-path "~/.codex/history.jsonl"
+(defcustom codex-prompt-autosuggestion-history-path
+  (codex--default-codex-path "history.jsonl")
   "Path to the Codex prompt history file used to recognize suggestions."
   :type 'file
   :group 'codex)
@@ -219,7 +228,10 @@ When nil, the CLI default is used.  Otherwise, pass `--ask-for-approval POLICY'.
 
 (defcustom codex-full-auto nil
   "Whether to bypass approvals and sandboxing for Codex.
-When non-nil, overrides sandbox and approval settings."
+This is a legacy option name retained for compatibility.  When
+non-nil, codex.el passes Codex's current
+`--dangerously-bypass-approvals-and-sandbox' flag and overrides
+sandbox and approval settings."
   :type 'boolean
   :group 'codex)
 
@@ -248,17 +260,20 @@ When nil, the CLI default is used."
   :type 'boolean
   :group 'codex)
 
-(defcustom codex-hooks-config-path "~/.codex/config.toml"
+(defcustom codex-hooks-config-path
+  (codex--default-codex-path "config.toml")
   "Path to the Codex config.toml file."
   :type 'string
   :group 'codex)
 
-(defcustom codex-hooks-json-path "~/.codex/hooks.json"
+(defcustom codex-hooks-json-path
+  (codex--default-codex-path "hooks.json")
   "Path to the Codex hooks.json file."
   :type 'string
   :group 'codex)
 
-(defcustom codex-transcript-sessions-directory "~/.codex/sessions"
+(defcustom codex-transcript-sessions-directory
+  (codex--default-codex-path "sessions")
   "Directory containing Codex JSONL session transcripts."
   :type 'directory
   :group 'codex)
@@ -2921,6 +2936,10 @@ With prefix ARG, show all Codex instances across all directories."
     (:type "PermissionRequest" :matcher ,codex--hook-all-events-matcher
            :timeout ,codex--hook-default-timeout)
     (:type "PostToolUse" :matcher ,codex--hook-all-events-matcher
+           :timeout ,codex--hook-default-timeout)
+    (:type "PreCompact" :matcher ,codex--hook-all-events-matcher
+           :timeout ,codex--hook-default-timeout)
+    (:type "PostCompact" :matcher ,codex--hook-all-events-matcher
            :timeout ,codex--hook-default-timeout)
     (:type "UserPromptSubmit" :matcher ,codex--hook-no-tool-matcher
            :timeout ,codex--hook-default-timeout))
